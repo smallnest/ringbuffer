@@ -6,7 +6,7 @@ A circular buffer (ring buffer) in Go, implement io.ReaderWriter interface
 	rb := NewRingBuffer(1024)
 	rb.Write([]byte("abcd"))
 	fmt.Println(rb.Length())
-	fmt.Println(rb.Available())
+	fmt.Println(rb.Free())
 	buf := make([]byte, 4)
 
 	rb.Read(buf)
