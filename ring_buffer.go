@@ -151,6 +151,11 @@ func (r *RingBuffer) Length() int {
 	return r.size - r.r + r.w
 }
 
+// Capacity returns the size of the underlying buffer.
+func (r *RingBuffer) Capacity() int {
+	return r.size
+}
+
 // Free returns the length of available bytes to write.
 func (r *RingBuffer) Free() int {
 	r.mu.Lock()
