@@ -151,8 +151,8 @@ func (r *RingBuffer) Length() int {
 	return r.size - r.r + r.w
 }
 
-// Available returns the length of available bytes to write.
-func (r *RingBuffer) Available() int {
+// Free returns the length of available bytes to write.
+func (r *RingBuffer) Free() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
