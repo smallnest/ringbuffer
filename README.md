@@ -4,16 +4,19 @@
 
 A circular buffer (ring buffer) in Go, implemented io.ReaderWriter interface
 
-![from [wikipedia](https://en.wikipedia.org/wiki/Circular_buffer)](Circular_Buffer_Animation.gif)
+[![wikipedia](Circular_Buffer_Animation.gif)](https://github.com/smallnest/ringbuffer)
 
 
 ```go
 	rb := NewRingBuffer(1024)
+
+	// write
 	rb.Write([]byte("abcd"))
 	fmt.Println(rb.Length())
 	fmt.Println(rb.Free())
-	buf := make([]byte, 4)
 
+	// read
+	buf := make([]byte, 4)
 	rb.Read(buf)
 	fmt.Println(string(buf))
 ```
