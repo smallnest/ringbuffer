@@ -11,7 +11,7 @@ func TestRingBuffer_interface(t *testing.T) {
 	rb := New(1)
 	var _ io.Writer = rb
 	var _ io.Reader = rb
-	var _ io.StringWriter = rb
+	// var _ io.StringWriter = rb
 	var _ io.ByteReader = rb
 	var _ io.ByteWriter = rb
 }
