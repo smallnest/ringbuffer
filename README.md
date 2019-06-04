@@ -1,5 +1,10 @@
 # ringbuffer
-A circular buffer (ring buffer) in Go, implement io.ReaderWriter interface
+
+[![License](https://img.shields.io/:license-MIT-blue.svg)](https://opensource.org/licenses/MIT) [![GoDoc](https://godoc.org/github.com/smallnest/ringbuffer?status.png)](http://godoc.org/github.com/smallnest/ringbuffer)  [![travis](https://travis-ci.org/smallnest/ringbuffer.svg?branch=master)](https://travis-ci.org/smallnest/ringbuffer) [![Go Report Card](https://goreportcard.com/badge/github.com/smallnest/ringbuffer)](https://goreportcard.com/report/github.com/smallnest/ringbuffer) [![coveralls](https://coveralls.io/repos/smallnest/ringbuffer/badge.svg?branch=master&service=github)](https://coveralls.io/github/smallnest/ringbuffer?branch=master) 
+
+A circular buffer (ring buffer) in Go, implemented io.ReaderWriter interface
+
+![from [wikipedia](https://en.wikipedia.org/wiki/Circular_buffer)](Circular_Buffer_Animation.gif)
 
 
 ```go
