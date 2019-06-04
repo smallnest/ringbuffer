@@ -11,6 +11,9 @@ func TestRingBuffer_interface(t *testing.T) {
 	rb := New(1)
 	var _ io.Writer = rb
 	var _ io.Reader = rb
+	var _ io.StringWriter = rb
+	var _ io.ByteReader = rb
+	var _ io.ByteWriter = rb
 }
 
 func TestRingBuffer_Write(t *testing.T) {
@@ -220,4 +223,140 @@ func TestRingBuffer_Read(t *testing.T) {
 		t.Fatalf("expect r.r=16 but got %d. r.w=%d", rb.r, rb.w)
 	}
 
+}
+
+func TestRingBuffer_ByteInterface(t *testing.T) {
+	rb := New(2)
+
+	// write one
+	err := rb.WriteByte('a')
+	if err != nil {
+		t.Fatalf("WriteByte failed: %v", err)
+	}
+	if rb.Length() != 1 {
+		t.Fatalf("expect len 1 byte but got %d. r.w=%d, r.r=%d", rb.Length(), rb.w, rb.r)
+	}
+	if rb.Free() != 1 {
+		t.Fatalf("expect free 1 byte but got %d. r.w=%d, r.r=%d", rb.Free(), rb.w, rb.r)
+	}
+	if bytes.Compare(rb.Bytes(), []byte{'a'}) != 0 {
+		t.Fatalf("expect a but got %s. r.w=%d, r.r=%d", rb.Bytes(), rb.w, rb.r)
+	}
+	// check empty or full
+	if rb.IsEmpty() {
+		t.Fatalf("expect IsEmpty is false but got true")
+	}
+	if rb.IsFull() {
+		t.Fatalf("expect IsFull is false but got true")
+	}
+
+	// write to, isFull
+	err = rb.WriteByte('b')
+	if err != nil {
+		t.Fatalf("WriteByte failed: %v", err)
+	}
+	if rb.Length() != 2 {
+		t.Fatalf("expect len 2 bytes but got %d. r.w=%d, r.r=%d", rb.Length(), rb.w, rb.r)
+	}
+	if rb.Free() != 0 {
+		t.Fatalf("expect free 0 byte but got %d. r.w=%d, r.r=%d", rb.Free(), rb.w, rb.r)
+	}
+	if bytes.Compare(rb.Bytes(), []byte{'a', 'b'}) != 0 {
+		t.Fatalf("expect a but got %s. r.w=%d, r.r=%d", rb.Bytes(), rb.w, rb.r)
+	}
+	// check empty or full
+	if rb.IsEmpty() {
+		t.Fatalf("expect IsEmpty is false but got true")
+	}
+	if !rb.IsFull() {
+		t.Fatalf("expect IsFull is true but got false")
+	}
+
+	// write
+	err = rb.WriteByte('c')
+	if err == nil {
+		t.Fatalf("expect ErrIsFull but got nil")
+	}
+	if rb.Length() != 2 {
+		t.Fatalf("expect len 2 bytes but got %d. r.w=%d, r.r=%d", rb.Length(), rb.w, rb.r)
+	}
+	if rb.Free() != 0 {
+		t.Fatalf("expect free 0 byte but got %d. r.w=%d, r.r=%d", rb.Free(), rb.w, rb.r)
+	}
+	if bytes.Compare(rb.Bytes(), []byte{'a', 'b'}) != 0 {
+		t.Fatalf("expect a but got %s. r.w=%d, r.r=%d", rb.Bytes(), rb.w, rb.r)
+	}
+	// check empty or full
+	if rb.IsEmpty() {
+		t.Fatalf("expect IsEmpty is false but got true")
+	}
+	if !rb.IsFull() {
+		t.Fatalf("expect IsFull is true but got false")
+	}
+
+	// read one
+	b, err := rb.ReadByte()
+	if err != nil {
+		t.Fatalf("ReadByte failed: %v", err)
+	}
+	if b != 'a' {
+		t.Fatalf("expect a but got %c. r.w=%d, r.r=%d", b, rb.w, rb.r)
+	}
+	if rb.Length() != 1 {
+		t.Fatalf("expect len 1 byte but got %d. r.w=%d, r.r=%d", rb.Length(), rb.w, rb.r)
+	}
+	if rb.Free() != 1 {
+		t.Fatalf("expect free 1 byte but got %d. r.w=%d, r.r=%d", rb.Free(), rb.w, rb.r)
+	}
+	if bytes.Compare(rb.Bytes(), []byte{'b'}) != 0 {
+		t.Fatalf("expect a but got %s. r.w=%d, r.r=%d", rb.Bytes(), rb.w, rb.r)
+	}
+	// check empty or full
+	if rb.IsEmpty() {
+		t.Fatalf("expect IsEmpty is false but got true")
+	}
+	if rb.IsFull() {
+		t.Fatalf("expect IsFull is false but got true")
+	}
+
+	// read two, empty
+	b, err = rb.ReadByte()
+	if err != nil {
+		t.Fatalf("ReadByte failed: %v", err)
+	}
+	if b != 'b' {
+		t.Fatalf("expect b but got %c. r.w=%d, r.r=%d", b, rb.w, rb.r)
+	}
+	if rb.Length() != 0 {
+		t.Fatalf("expect len 0 byte but got %d. r.w=%d, r.r=%d", rb.Length(), rb.w, rb.r)
+	}
+	if rb.Free() != 2 {
+		t.Fatalf("expect free 2 byte but got %d. r.w=%d, r.r=%d", rb.Free(), rb.w, rb.r)
+	}
+	// check empty or full
+	if !rb.IsEmpty() {
+		t.Fatalf("expect IsEmpty is true but got false")
+	}
+	if rb.IsFull() {
+		t.Fatalf("expect IsFull is false but got true")
+	}
+
+	// read three, error
+	b, err = rb.ReadByte()
+	if err == nil {
+		t.Fatalf("expect ErrIsEmpty but got nil")
+	}
+	if rb.Length() != 0 {
+		t.Fatalf("expect len 0 byte but got %d. r.w=%d, r.r=%d", rb.Length(), rb.w, rb.r)
+	}
+	if rb.Free() != 2 {
+		t.Fatalf("expect free 2 byte but got %d. r.w=%d, r.r=%d", rb.Free(), rb.w, rb.r)
+	}
+	// check empty or full
+	if !rb.IsEmpty() {
+		t.Fatalf("expect IsEmpty is true but got false")
+	}
+	if rb.IsFull() {
+		t.Fatalf("expect IsFull is false but got true")
+	}
 }

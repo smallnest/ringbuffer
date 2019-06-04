@@ -7,6 +7,7 @@ package ringbuffer
 import (
 	"errors"
 	"sync"
+	"unsafe"
 )
 
 var (
@@ -53,7 +54,7 @@ func (r *RingBuffer) Read(p []byte) (n int, err error) {
 			n = len(p)
 		}
 		copy(p, r.buf[r.r:r.r+n])
-		r.r = r.r + n
+		r.r = (r.r + n) % r.size
 		r.mu.Unlock()
 		return
 	}
@@ -76,6 +77,24 @@ func (r *RingBuffer) Read(p []byte) (n int, err error) {
 	r.isFull = false
 	r.mu.Unlock()
 	return n, err
+}
+
+// ReadByte reads and returns the next byte from the input or ErrIsEmpty.
+func (r *RingBuffer) ReadByte() (b byte, err error) {
+	r.mu.Lock()
+	if r.w == r.r && !r.isFull {
+		r.mu.Unlock()
+		return 0, ErrIsEmpty
+	}
+	b = r.buf[r.r]
+	r.r++
+	if r.r == r.size {
+		r.r = 0
+	}
+
+	r.isFull = false
+	r.mu.Unlock()
+	return b, err
 }
 
 // Write writes len(p) bytes from p to the underlying buf.
@@ -132,6 +151,27 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
+// WriteByte writes one byte into buffer, and returns ErrIsFull if buffer is full.
+func (r *RingBuffer) WriteByte(c byte) error {
+	r.mu.Lock()
+	if r.w == r.r && r.isFull {
+		r.mu.Unlock()
+		return ErrIsFull
+	}
+	r.buf[r.w] = c
+	r.w++
+
+	if r.w == r.size {
+		r.w = 0
+	}
+	if r.w == r.r {
+		r.isFull = true
+	}
+	r.mu.Unlock()
+
+	return nil
+}
+
 // Length return the length of available read bytes.
 func (r *RingBuffer) Length() int {
 	r.mu.Lock()
@@ -175,6 +215,14 @@ func (r *RingBuffer) Free() int {
 	return r.size - r.w + r.r
 }
 
+// WriteString writes the contents of the string s to buffer, which accepts a slice of bytes.
+func (r *RingBuffer) WriteString(s string) (n int, err error) {
+	x := (*[2]uintptr)(unsafe.Pointer(&s))
+	h := [3]uintptr{x[0], x[1], x[1]}
+	buf := *(*[]byte)(unsafe.Pointer(&h))
+	return r.Write(buf)
+}
+
 // Bytes returns all available read bytes. It does not move the read pointer and only copy the available data.
 func (r *RingBuffer) Bytes() []byte {
 	r.mu.Lock()
@@ -196,7 +244,7 @@ func (r *RingBuffer) Bytes() []byte {
 	}
 
 	n := r.size - r.r + r.w
-	buf := make([]byte, r.w-r.r)
+	buf := make([]byte, n)
 
 	if r.r+n < r.size {
 		copy(buf, r.buf[r.r:r.r+n])
