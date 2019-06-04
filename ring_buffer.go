@@ -25,8 +25,8 @@ type RingBuffer struct {
 	mu     sync.Mutex
 }
 
-// NewRingBuffer returns a new RingBuffer whose buffer has the given size.
-func NewRingBuffer(size int) *RingBuffer {
+// New returns a new RingBuffer whose buffer has the given size.
+func New(size int) *RingBuffer {
 	return &RingBuffer{
 		buf:  make([]byte, size),
 		size: size,

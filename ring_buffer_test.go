@@ -7,7 +7,7 @@ import (
 )
 
 func TestRingBuffer_Write(t *testing.T) {
-	rb := NewRingBuffer(64)
+	rb := New(64)
 
 	// check empty or full
 	if !rb.IsEmpty() {
@@ -137,7 +137,7 @@ func TestRingBuffer_Write(t *testing.T) {
 }
 
 func TestRingBuffer_Read(t *testing.T) {
-	rb := NewRingBuffer(64)
+	rb := New(64)
 
 	// check empty or full
 	if !rb.IsEmpty() {

@@ -3,7 +3,7 @@ package ringbuffer
 import "fmt"
 
 func ExampleRingBuffer() {
-	rb := NewRingBuffer(1024)
+	rb := New(1024)
 	rb.Write([]byte("abcd"))
 	fmt.Println(rb.Length())
 	fmt.Println(rb.Free())
