@@ -2,9 +2,16 @@ package ringbuffer
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 )
+
+func TestRingBuffer_interface(t *testing.T) {
+	rb := New(1)
+	var _ io.Writer = rb
+	var _ io.Reader = rb
+}
 
 func TestRingBuffer_Write(t *testing.T) {
 	rb := New(64)
