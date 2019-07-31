@@ -132,7 +132,7 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 		} else {
 			copy(r.buf[r.w:], p[:c1])
 			c2 := n - c1
-			copy(r.buf[0:], p[c1+1:])
+			copy(r.buf[0:], p[c1:])
 			r.w = c2
 		}
 	} else {
