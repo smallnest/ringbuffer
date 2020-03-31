@@ -170,6 +170,33 @@ func TestRingBuffer_Write(t *testing.T) {
 	if bytes.Compare(rb.Bytes(), []byte("bcd"+strings.Repeat("abcd", 15))) != 0 {
 		t.Fatalf("expect 63 ... but got %s. r.w=%d, r.r=%d", rb.Bytes(), rb.w, rb.r)
 	}
+
+	rb.Reset()
+	n, err = rb.Write([]byte(strings.Repeat("abcd", 16)))
+	if err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if n != 64 {
+		t.Fatalf("expect write 64 bytes but got %d", n)
+	}
+	if rb.Free() != 0 {
+		t.Fatalf("expect free 0 bytes but got %d. r.w=%d, r.r=%d", rb.Free(), rb.w, rb.r)
+	}
+	buf = make([]byte, 16)
+	rb.Read(buf)
+	n, err = rb.Write([]byte(strings.Repeat("1234", 4)))
+	if err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if n != 16 {
+		t.Fatalf("expect write 16 bytes but got %d", n)
+	}
+	if rb.Free() != 0 {
+		t.Fatalf("expect free 0 bytes but got %d. r.w=%d, r.r=%d", rb.Free(), rb.w, rb.r)
+	}
+	if !bytes.Equal(append(buf, rb.Bytes()...), []byte(strings.Repeat("abcd", 16)+strings.Repeat("1234", 4))) {
+		t.Fatalf("expect 16 abcd and 4 1234 but got %s. r.w=%d, r.r=%d", rb.Bytes(), rb.w, rb.r)
+	}
 }
 
 func TestRingBuffer_Read(t *testing.T) {

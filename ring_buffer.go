@@ -106,7 +106,7 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 		return 0, nil
 	}
 	r.mu.Lock()
-	if r.w == r.r && r.isFull {
+	if r.isFull {
 		r.mu.Unlock()
 		return 0, ErrIsFull
 	}
@@ -231,7 +231,8 @@ func (r *RingBuffer) Bytes() []byte {
 	if r.w == r.r {
 		if r.isFull {
 			buf := make([]byte, r.size)
-			copy(buf, r.buf)
+			copy(buf, r.buf[r.r:])
+			copy(buf[r.size-r.r:], r.buf[:r.w])
 			return buf
 		}
 		return nil
