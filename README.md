@@ -8,7 +8,7 @@ A circular buffer (ring buffer) in Go, implemented io.ReaderWriter interface
 
 
 ```go
-	rb := NewRingBuffer(1024)
+	rb := New(1024)
 
 	// write
 	rb.Write([]byte("abcd"))
