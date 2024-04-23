@@ -530,6 +530,9 @@ func (r *RingBuffer) IsEmpty() bool {
 // CloseWithError never overwrites the previous error if it exists
 // and always returns nil.
 func (r *RingBuffer) CloseWithError(err error) {
+	if err == nil {
+		err = io.EOF
+	}
 	r.setErr(err, false)
 }
 
