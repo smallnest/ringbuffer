@@ -16,6 +16,7 @@ var (
 	ErrTooMuchDataToWrite = errors.New("too much data to write")
 	ErrIsFull             = errors.New("ringbuffer is full")
 	ErrIsEmpty            = errors.New("ringbuffer is empty")
+	ErrIsNotEmpty         = errors.New("ringbuffer is not empty")
 	ErrAcquireLock        = errors.New("unable to acquire lock")
 	ErrWriteOnClosed      = errors.New("write on closed ringbuffer")
 )
@@ -34,8 +35,8 @@ type RingBuffer struct {
 	block     bool
 	mu        sync.Mutex
 	wg        sync.WaitGroup
-	readCond  *sync.Cond //Signalled when data has been read.
-	writeCond *sync.Cond //Signalled when data has been written.
+	readCond  *sync.Cond // Signalled when data has been read.
+	writeCond *sync.Cond // Signalled when data has been written.
 }
 
 // New returns a new RingBuffer whose buffer has the given size.
@@ -86,16 +87,13 @@ func (r *RingBuffer) setErr(err error, locked bool) error {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 	}
-	if r.err != nil {
-		if err == io.EOF {
-			return nil
-		}
+	if r.err != nil && r.err != io.EOF {
 		return r.err
 	}
 
 	switch err {
 	// Internal errors are transient
-	case nil, ErrIsEmpty, ErrIsFull, ErrAcquireLock, ErrTooMuchDataToWrite:
+	case nil, ErrIsEmpty, ErrIsFull, ErrAcquireLock, ErrTooMuchDataToWrite, ErrIsNotEmpty:
 		return err
 	default:
 		r.err = err
@@ -541,6 +539,32 @@ func (r *RingBuffer) CloseWriter() {
 	r.setErr(io.EOF, false)
 }
 
+// Flush waits for the buffer to be empty and fully read.
+// If not blocking ErrIsNotEmpty will be returned if the buffer still contains data.
+func (r *RingBuffer) Flush() error {
+	for !r.IsEmpty() {
+		if !r.block {
+			return r.setErr(ErrIsNotEmpty, false)
+		}
+		r.mu.Lock()
+		r.readCond.Wait()
+		err := r.readErr(true)
+		r.mu.Unlock()
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			return err
+		}
+	}
+
+	err := r.readErr(false)
+	if err == io.EOF {
+		return nil
+	}
+	return err
+}
+
 // Reset the read pointer and writer pointer to zero.
 func (r *RingBuffer) Reset() {
 	r.mu.Lock()
@@ -561,4 +585,20 @@ func (r *RingBuffer) Reset() {
 	r.w = 0
 	r.err = nil
 	r.isFull = false
+}
+
+// WriteCloser returns a WriteCloser that writes to the ring buffer.
+// When the returned WriteCloser is closed, it will wait for all data to be read before returning.
+func (r *RingBuffer) WriteCloser() io.WriteCloser {
+	return &writeCloser{RingBuffer: r}
+}
+
+type writeCloser struct {
+	*RingBuffer
+}
+
+// Close provides a close method for the WriteCloser.
+func (wc *writeCloser) Close() error {
+	wc.CloseWriter()
+	return wc.Flush()
 }

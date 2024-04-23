@@ -541,6 +541,9 @@ func TestRingBuffer_Blocking(t *testing.T) {
 				time.Sleep(time.Duration(writeRng.Intn(maxSleep)))
 			}
 		}
+		if err := rb.Flush(); err != nil {
+			t.Fatalf("flush failed: %v", err)
+		}
 		rb.CloseWriter()
 	}
 	wg.Wait()
@@ -700,6 +703,9 @@ func TestRingBuffer_BlockingBig(t *testing.T) {
 			if doSleep && writeRng.Intn(10) == 0 {
 				time.Sleep(time.Duration(writeRng.Intn(maxSleep)))
 			}
+		}
+		if err := rb.Flush(); err != nil {
+			t.Fatalf("flush failed: %v", err)
 		}
 		rb.CloseWriter()
 	}
@@ -895,6 +901,9 @@ func TestRingBufferCloseError(t *testing.T) {
 	if err := rb.TryWriteByte(0); err != (testError1{}) {
 		t.Errorf("Write error: got %T, want testError1", err)
 	}
+	if err := rb.Flush(); err != (testError1{}) {
+		t.Errorf("Write error: got %T, want testError1", err)
+	}
 
 	rb.CloseWithError(testError2{})
 	if _, err := rb.Write(nil); err != (testError1{}) {
@@ -975,6 +984,10 @@ func TestRingBufferCloseErrorUnblocks(t *testing.T) {
 	})
 	testCancel(func() {
 		rb.ReadByte()
+	})
+	testCancel(func() {
+		rb.Write(make([]byte, sz))
+		rb.Flush()
 	})
 }
 
