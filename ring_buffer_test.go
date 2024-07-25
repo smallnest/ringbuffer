@@ -1048,3 +1048,21 @@ func timeout(after time.Duration) (cancel func()) {
 		close(cc)
 	}
 }
+
+func TestRingBuffer_Peek(t *testing.T) {
+	rb := New(10)
+	data := []byte("hello")
+	rb.Write(data)
+
+	buf := make([]byte, len(data))
+	n, err := rb.Peek(buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != len(data) {
+		t.Fatalf("expected %d bytes, got %d", len(data), n)
+	}
+	if string(buf) != string(data) {
+		t.Fatalf("expected %s, got %s", string(data), string(buf))
+	}
+}

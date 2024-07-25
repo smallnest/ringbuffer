@@ -605,3 +605,49 @@ func (wc *writeCloser) Close() error {
 	wc.CloseWriter()
 	return wc.Flush()
 }
+
+// Peek reads up to len(p) bytes into p without moving the read pointer.
+func (r *RingBuffer) Peek(p []byte) (n int, err error) {
+	if len(p) == 0 {
+		return 0, r.readErr(false)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.readErr(true); err != nil {
+		return 0, err
+	}
+
+	return r.peek(p)
+}
+
+func (r *RingBuffer) peek(p []byte) (n int, err error) {
+	if r.w == r.r && !r.isFull {
+		return 0, ErrIsEmpty
+	}
+
+	if r.w > r.r {
+		n = r.w - r.r
+		if n > len(p) {
+			n = len(p)
+		}
+		copy(p, r.buf[r.r:r.r+n])
+		return
+	}
+
+	n = r.size - r.r + r.w
+	if n > len(p) {
+		n = len(p)
+	}
+
+	if r.r+n <= r.size {
+		copy(p, r.buf[r.r:r.r+n])
+	} else {
+		c1 := r.size - r.r
+		copy(p, r.buf[r.r:r.size])
+		c2 := n - c1
+		copy(p[c1:], r.buf[0:c2])
+	}
+
+	return n, r.readErr(true)
+}
