@@ -269,6 +269,9 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 		err = r.setErr(err, true)
 		if r.block && (err == ErrIsFull || err == ErrTooMuchDataToWrite) {
 			r.writeCond.Broadcast()
+			if r.err != nil {
+				break
+			}
 			r.readCond.Wait()
 			p = p[n:]
 			err = nil
@@ -396,6 +399,9 @@ func (r *RingBuffer) TryWriteByte(c byte) error {
 }
 
 func (r *RingBuffer) writeByte(c byte) error {
+	if r.err != nil {
+		return r.err
+	}
 	if r.w == r.r && r.isFull {
 		return ErrIsFull
 	}
