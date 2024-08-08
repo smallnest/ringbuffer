@@ -173,7 +173,7 @@ func TestRingBuffer_Write(t *testing.T) {
 	if rb.Length() != 3 {
 		t.Fatalf("expect len 3 bytes but got %d. r.w=%d, r.r=%d", rb.Length(), rb.w, rb.r)
 	}
-	_, err = rb.Write([]byte(strings.Repeat("abcd", 15)))
+	rb.Write([]byte(strings.Repeat("abcd", 15)))
 
 	if !bytes.Equal(rb.Bytes(nil), []byte("bcd"+strings.Repeat("abcd", 15))) {
 		t.Fatalf("expect 63 ... but got %s. r.w=%d, r.r=%d", rb.Bytes(nil), rb.w, rb.r)
@@ -299,7 +299,7 @@ func TestRingBuffer_WriteBlocking(t *testing.T) {
 	if rb.Length() != 3 {
 		t.Fatalf("expect len 3 bytes but got %d. r.w=%d, r.r=%d", rb.Length(), rb.w, rb.r)
 	}
-	_, err = rb.Write([]byte(strings.Repeat("abcd", 15)))
+	rb.Write([]byte(strings.Repeat("abcd", 15)))
 
 	if !bytes.Equal(rb.Bytes(nil), []byte("bcd"+strings.Repeat("abcd", 15))) {
 		t.Fatalf("expect 63 ... but got %s. r.w=%d, r.r=%d", rb.Bytes(nil), rb.w, rb.r)
@@ -410,7 +410,6 @@ func TestRingBuffer_Read(t *testing.T) {
 	if rb.r != 16 {
 		t.Fatalf("expect r.r=16 but got %d. r.w=%d", rb.r, rb.w)
 	}
-
 }
 
 func TestRingBuffer_Blocking(t *testing.T) {
@@ -420,12 +419,12 @@ func TestRingBuffer_Blocking(t *testing.T) {
 
 	var readBytes int
 	var wroteBytes int
-	var readHash = crc32.NewIEEE()
-	var wroteHash = crc32.NewIEEE()
 	var readBuf bytes.Buffer
 	var wroteBuf bytes.Buffer
-	var read = io.Writer(readHash)
-	var wrote = io.Writer(wroteHash)
+	readHash := crc32.NewIEEE()
+	wroteHash := crc32.NewIEEE()
+	read := io.Writer(readHash)
+	wrote := io.Writer(wroteHash)
 	if debug {
 		read = io.MultiWriter(read, &readBuf)
 		wrote = io.MultiWriter(wrote, &wroteBuf)
@@ -437,7 +436,7 @@ func TestRingBuffer_Blocking(t *testing.T) {
 	}
 	// Inject random reader/writer sleeps.
 	const maxSleep = int(1 * time.Millisecond)
-	var doSleep = !testing.Short()
+	doSleep := !testing.Short()
 	rb := New(4 << 10).SetBlocking(true)
 
 	// Reader
@@ -583,12 +582,12 @@ func TestRingBuffer_BlockingBig(t *testing.T) {
 
 	var readBytes int
 	var wroteBytes int
-	var readHash = crc32.NewIEEE()
-	var wroteHash = crc32.NewIEEE()
+	readHash := crc32.NewIEEE()
+	wroteHash := crc32.NewIEEE()
 	var readBuf bytes.Buffer
 	var wroteBuf bytes.Buffer
-	var read = io.Writer(readHash)
-	var wrote = io.Writer(wroteHash)
+	read := io.Writer(readHash)
+	wrote := io.Writer(wroteHash)
 	if debug {
 		read = io.MultiWriter(read, &readBuf)
 		wrote = io.MultiWriter(wrote, &wroteBuf)
@@ -600,7 +599,7 @@ func TestRingBuffer_BlockingBig(t *testing.T) {
 	}
 	// Inject random reader/writer sleeps.
 	const maxSleep = int(1 * time.Millisecond)
-	var doSleep = !testing.Short()
+	doSleep := !testing.Short()
 	rb := New(4 << 10).SetBlocking(true)
 
 	// Reader
@@ -740,6 +739,224 @@ func TestRingBuffer_BlockingBig(t *testing.T) {
 	}
 }
 
+func TestRingBuffer_ReadFromBig(t *testing.T) {
+	// Typical runtime is ~5-10s.
+	defer timeout(60 * time.Second)()
+	const debug = false
+
+	var readBytes int
+	var wroteBytes int
+	readHash := crc32.NewIEEE()
+	wroteHash := crc32.NewIEEE()
+	var readBuf bytes.Buffer
+	var wroteBuf bytes.Buffer
+	read := io.Writer(readHash)
+	wrote := io.Writer(wroteHash)
+	read = io.MultiWriter(read, &readBuf)
+	wrote = io.MultiWriter(wrote, &wroteBuf)
+	debugln := func(args ...interface{}) {
+		if debug {
+			fmt.Println(args...)
+		}
+	}
+	// Inject random reader/writer sleeps.
+	const maxSleep = int(1 * time.Millisecond)
+	doSleep := !testing.Short()
+	rb := New(4 << 10).SetBlocking(true)
+
+	// Reader
+	var readErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer rb.CloseWithError(readErr)
+		readRng := rand.New(rand.NewSource(1))
+		buf := make([]byte, 64<<10)
+		for {
+			// Read
+			n, err := rb.Read(buf[:readRng.Intn(len(buf))])
+			readBytes += n
+			read.Write(buf[:n])
+			if err != nil {
+				readErr = err
+				break
+			}
+			debugln("READ 1\t", n, readBytes)
+
+			// ReadByte
+			b, err := rb.ReadByte()
+			if err != nil {
+				readErr = err
+				break
+			}
+			readBytes++
+			read.Write([]byte{b})
+			debugln("READ 2\t", 1, readBytes)
+
+			// TryRead
+			n, err = rb.TryRead(buf[:readRng.Intn(len(buf))])
+			readBytes += n
+			read.Write(buf[:n])
+			if err != nil && err != ErrAcquireLock && err != ErrIsEmpty {
+				readErr = err
+				break
+			}
+			debugln("READ 3\t", n, readBytes)
+			if doSleep && readRng.Intn(20) == 0 {
+				time.Sleep(time.Duration(readRng.Intn(maxSleep)))
+			}
+		}
+	}()
+
+	// Writer
+	{
+		writeRng := rand.New(rand.NewSource(2))
+		buf := make([]byte, 100<<10)
+		for i := 0; i < 500; i++ {
+			writeRng.Read(buf)
+			// Write
+			wroteBytes += len(buf)
+			wrote.Write(buf)
+		}
+		debugln("ReadFrom with", wroteBytes, wroteBuf.Len())
+		n, err := rb.ReadFrom(bytes.NewReader(wroteBuf.Bytes()))
+		debugln("ReadFrom returned", n, err)
+		if n != int64(wroteBytes) {
+			t.Fatalf("expected %d bytes but got %d", wroteBytes, n)
+		}
+		if err != nil {
+			t.Fatalf("ReadFrom failed: %v", err)
+		}
+		debugln("ReadFrom with", wroteBytes, wroteBuf.Len())
+		if err := rb.Flush(); err != nil {
+			t.Fatalf("flush failed: %v", err)
+		}
+		rb.CloseWriter()
+	}
+	wg.Wait()
+	if !errors.Is(readErr, io.EOF) {
+		t.Fatalf("expect io.EOF but got %v", readErr)
+	}
+	if readBytes != wroteBytes {
+		a, b := readBuf.Bytes(), wroteBuf.Bytes()
+		if debug && !bytes.Equal(a, b) {
+			common := len(a)
+			for i := range a {
+				if a[i] != b[i] {
+					t.Errorf("%x != %x", a[i], b[i])
+					common = i
+					break
+				}
+			}
+			a, b = a[common:], b[common:]
+			if len(a) > 64 {
+				a = a[:64]
+			}
+			if len(b) > 64 {
+				b = b[:64]
+			}
+			t.Errorf("after %d common bytes, difference \nread: %x\nwrote:%x", common, a, b)
+		}
+		t.Fatalf("expect read %d bytes but got %d", wroteBytes, readBytes)
+	}
+	if readHash.Sum32() != wroteHash.Sum32() {
+		t.Fatalf("expect read hash 0x%08x but got 0x%08x", readHash.Sum32(), wroteHash.Sum32())
+	}
+}
+
+type serveStream struct {
+	b   []byte
+	rng *rand.Rand
+}
+
+func (s *serveStream) Read(p []byte) (n int, err error) {
+	if len(s.b) == 0 {
+		return 0, io.EOF
+	}
+	n = s.rng.Intn(len(p) + 1)
+	if n > len(s.b) {
+		n = len(s.b)
+	}
+	copy(p, s.b[:n])
+	s.b = s.b[n:]
+	if len(s.b) == 0 {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func TestRingBuffer_Copy(t *testing.T) {
+	// Typical runtime is ~1-2s.
+	defer timeout(60 * time.Second)()
+
+	for i := int64(0); i < 100; i++ {
+		if testing.Short() && i > 5 {
+			break
+		}
+		var wroteBytes int
+		readHash := crc32.NewIEEE()
+		wroteHash := crc32.NewIEEE()
+		var readBuf bytes.Buffer
+		var wroteBuf bytes.Buffer
+		read := io.Writer(readHash)
+		wrote := io.Writer(wroteHash)
+		read = io.MultiWriter(read, &readBuf)
+		wrote = io.MultiWriter(wrote, &wroteBuf)
+
+		rb := New(4 << 10).SetBlocking(true)
+
+		// Writer
+		writeRng := rand.New(rand.NewSource(2 + i))
+		buf := make([]byte, 100<<10)
+		writeRng.Read(buf)
+		for i := 0; i < writeRng.Intn(1000); i++ {
+			// Write
+			wroteBytes += len(buf)
+			wrote.Write(buf)
+		}
+		in := &serveStream{
+			b:   wroteBuf.Bytes(),
+			rng: rand.New(rand.NewSource(0xc0cac01a + i)),
+		}
+
+		copied, err := rb.Copy(read, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if copied != int64(wroteBytes) {
+			t.Fatalf("copied %d bytes, expected %d", copied, wroteBytes)
+		}
+		readBytes := readBuf.Len()
+
+		if readBytes != wroteBytes || readHash.Sum32() != wroteHash.Sum32() {
+			a, b := readBuf.Bytes(), wroteBuf.Bytes()
+			if !bytes.Equal(a, b) {
+				common := len(a)
+				for i := range a {
+					if a[i] != b[i] {
+						t.Errorf("%x != %x", a[i], b[i])
+						common = i
+						break
+					}
+				}
+				a, b = a[common:], b[common:]
+				if len(a) > 64 {
+					a = a[:64]
+				}
+				if len(b) > 64 {
+					b = b[:64]
+				}
+				t.Errorf("after %d common bytes, difference \nread: %x\nwrote:%x", common, a, b)
+			}
+			t.Fatalf("expect read %d bytes but got %d", wroteBytes, readBytes)
+		}
+		if readHash.Sum32() != wroteHash.Sum32() {
+			t.Fatalf("expect read hash 0x%08x but got 0x%08x", readHash.Sum32(), wroteHash.Sum32())
+		}
+	}
+}
+
 func TestRingBuffer_ByteInterface(t *testing.T) {
 	defer timeout(5 * time.Second)()
 	rb := New(2)
@@ -858,7 +1075,7 @@ func TestRingBuffer_ByteInterface(t *testing.T) {
 	}
 
 	// read three, error
-	b, err = rb.ReadByte()
+	_, err = rb.ReadByte()
 	if err == nil {
 		t.Fatalf("expect ErrIsEmpty but got nil")
 	}
