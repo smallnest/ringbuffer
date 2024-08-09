@@ -13,12 +13,26 @@ import (
 )
 
 var (
+	// ErrTooMuchDataToWrite is returned when the data to write is more than the buffer size.
 	ErrTooMuchDataToWrite = errors.New("too much data to write")
-	ErrIsFull             = errors.New("ringbuffer is full")
-	ErrIsEmpty            = errors.New("ringbuffer is empty")
-	ErrIsNotEmpty         = errors.New("ringbuffer is not empty")
-	ErrAcquireLock        = errors.New("unable to acquire lock")
-	ErrWriteOnClosed      = errors.New("write on closed ringbuffer")
+
+	// ErrIsFull is returned when the buffer is full and not blocking.
+	ErrIsFull = errors.New("ringbuffer is full")
+
+	// ErrIsEmpty is returned when the buffer is empty and not blocking.
+	ErrIsEmpty = errors.New("ringbuffer is empty")
+
+	// ErrIsNotEmpty is returned when the buffer is not empty and not blocking.
+	ErrIsNotEmpty = errors.New("ringbuffer is not empty")
+
+	// ErrAcquireLock is returned when the lock is not acquired on Try operations.
+	ErrAcquireLock = errors.New("unable to acquire lock")
+
+	// ErrWriteOnClosed is returned when write on a closed ringbuffer.
+	ErrWriteOnClosed = errors.New("write on closed ringbuffer")
+
+	// ErrReaderClosed is returned when a ReadClosed closed the ringbuffer.
+	ErrReaderClosed = errors.New("reader closed")
 )
 
 // RingBuffer is a circular buffer that implement io.ReaderWriter interface.
@@ -286,8 +300,163 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 	return wrote, r.setErr(err, true)
 }
 
+// ReadFrom will fulfill the write side of the ringbuffer.
+// This will to writes directly into the buffer, therefore avoiding a mem-copy
+// when using the Write.
+//
+// ReadFrom will not automatically close the buffer even after returning.
+// For that call CloseWriter().
+//
+// ReadFrom reads data from r until EOF or error.
+// The return value n is the number of bytes read.
+// Any error except EOF encountered during the read is also returned,
+// and the error will cause the Read side to fail as well.
+// ReadFrom only available in blocking mode.
+func (r *RingBuffer) ReadFrom(rd io.Reader) (n int64, err error) {
+	if !r.block {
+		return 0, errors.New("RingBuffer: ReadFrom only available in blocking mode")
+	}
+	zeroReads := 0
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for {
+		if err = r.readErr(true); err != nil {
+			return n, err
+		}
+		if r.isFull {
+			// Wait for a read
+			r.readCond.Wait()
+			continue
+		}
+
+		var toRead []byte
+		if r.w >= r.r {
+			// After reader, read until end of buffer
+			toRead = r.buf[r.w:]
+		} else {
+			// Before reader, read until reader.
+			toRead = r.buf[r.w:r.r]
+		}
+		// Unlock while reading
+		r.mu.Unlock()
+		nr, rerr := rd.Read(toRead)
+		r.mu.Lock()
+		if rerr != nil && rerr != io.EOF {
+			err = r.setErr(err, true)
+			break
+		}
+		if nr == 0 && rerr == nil {
+			zeroReads++
+			if zeroReads >= 100 {
+				err = r.setErr(io.ErrNoProgress, true)
+			}
+			continue
+		}
+		zeroReads = 0
+		r.w += nr
+		if r.w == r.size {
+			r.w = 0
+		}
+		r.isFull = r.r == r.w && nr > 0
+		n += int64(nr)
+		r.writeCond.Broadcast()
+		if rerr == io.EOF {
+			// We do not close.
+			break
+		}
+	}
+	return n, err
+}
+
+// WriteTo writes data to w until there's no more data to write or
+// when an error occurs. The return value n is the number of bytes
+// written. Any error encountered during the write is also returned.
+//
+// If a non-nil error is returned the write side will also see the error.
+func (r *RingBuffer) WriteTo(w io.Writer) (n int64, err error) {
+	if !r.block {
+		return 0, errors.New("RingBuffer: WriteTo only available in blocking mode")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Don't write more than half, to unblock reads earlier.
+	maxWrite := len(r.buf) / 2
+	// But write at least 8K if possible
+	if maxWrite < 8<<10 {
+		maxWrite = len(r.buf)
+	}
+	for {
+		if err = r.readErr(true); err != nil {
+			break
+		}
+		if r.r == r.w && !r.isFull {
+			// Wait for a write to make space
+			r.writeCond.Wait()
+			continue
+		}
+
+		var toWrite []byte
+		if r.r >= r.w {
+			// After writer, we can write until end of buffer
+			toWrite = r.buf[r.r:]
+		} else {
+			// Before reader, we can read until writer.
+			toWrite = r.buf[r.r:r.w]
+		}
+		if len(toWrite) > maxWrite {
+			toWrite = toWrite[:maxWrite]
+		}
+		// Unlock while reading
+		r.mu.Unlock()
+		nr, werr := w.Write(toWrite)
+		r.mu.Lock()
+		if werr != nil {
+			err = r.setErr(werr, true)
+			break
+		}
+		if nr != len(toWrite) {
+			err = r.setErr(io.ErrShortWrite, true)
+			break
+		}
+		r.r += nr
+		if r.r == r.size {
+			r.r = 0
+		}
+		r.isFull = false
+		n += int64(nr)
+		r.readCond.Broadcast()
+	}
+	if err == io.EOF {
+		err = nil
+	}
+	return n, err
+}
+
+// Copy will pipe all data from the reader to the writer through the ringbuffer.
+// The ringbuffer will switch to blocking mode.
+// Reads and writes will be done async.
+// No internal mem-copies are used for the transfer.
+//
+// Calling CloseWithError will cancel the transfer and make the function return when
+// any ongoing reads or writes have finished.
+//
+// Calling Read or Write functions concurrently with running this will lead to unpredictable results.
+func (r *RingBuffer) Copy(dst io.Writer, src io.Reader) (written int64, err error) {
+	r.SetBlocking(true)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		r.ReadFrom(src)
+		r.CloseWriter()
+	}()
+	defer wg.Wait()
+	return r.WriteTo(dst)
+}
+
 // TryWrite writes len(p) bytes from p to the underlying buf like Write, but it is not blocking.
-// If it has not succeeded to accquire the lock, it return 0 as n and ErrAcquireLock.
+// If it has not succeeded to acquire the lock, it return 0 as n and ErrAcquireLock.
 func (r *RingBuffer) TryWrite(p []byte) (n int, err error) {
 	if len(p) == 0 {
 		return 0, r.setErr(nil, false)
@@ -551,23 +720,23 @@ func (r *RingBuffer) CloseWriter() {
 // Flush waits for the buffer to be empty and fully read.
 // If not blocking ErrIsNotEmpty will be returned if the buffer still contains data.
 func (r *RingBuffer) Flush() error {
-	for !r.IsEmpty() {
-		if !r.block {
-			return r.setErr(ErrIsNotEmpty, false)
-		}
-		r.mu.Lock()
-		r.readCond.Wait()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for r.w != r.r || r.isFull {
 		err := r.readErr(true)
-		r.mu.Unlock()
 		if err != nil {
 			if err == io.EOF {
 				err = nil
 			}
 			return err
 		}
+		if !r.block {
+			return ErrIsNotEmpty
+		}
+		r.readCond.Wait()
 	}
 
-	err := r.readErr(false)
+	err := r.readErr(true)
 	if err == io.EOF {
 		return nil
 	}
@@ -610,6 +779,26 @@ type writeCloser struct {
 func (wc *writeCloser) Close() error {
 	wc.CloseWriter()
 	return wc.Flush()
+}
+
+// ReadCloser returns a io.ReadCloser that reads to the ring buffer.
+// When the returned ReadCloser is closed, ErrReaderClosed will be returned on any writes done afterwards.
+func (r *RingBuffer) ReadCloser() io.ReadCloser {
+	return &readCloser{RingBuffer: r}
+}
+
+type readCloser struct {
+	*RingBuffer
+}
+
+// Close provides a close method for the ReadCloser.
+func (rc *readCloser) Close() error {
+	rc.CloseWithError(ErrReaderClosed)
+	err := rc.readErr(false)
+	if err == ErrReaderClosed {
+		err = nil
+	}
+	return err
 }
 
 // Peek reads up to len(p) bytes into p without moving the read pointer.

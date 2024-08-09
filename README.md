@@ -58,3 +58,49 @@ Either side can use `rb.CloseWithError(err error)` to signal an error and close 
 Any reads or writes will return the error on next call.
 
 In blocking mode errors are stateful and the same error will be returned until `rb.Reset()` is called.
+
+# io.Copy replacement
+
+The ring buffer can replace `io.Copy` and `io.CopyBuffer` to do async copying through the ring buffer.
+
+The copy operation will happen directly on the buffer, so between reads and writes there is no memory copy.
+
+Here is a simple example where the copy operation is replaced by a ring buffer:
+
+```go
+func saveWebsite(url, file string) {
+    in, _ := http.Get(url)
+    out, _ := os.Create(file)
+
+    // Copy with regular buffered copy
+    // n, err := io.Copy(out, in.Body)
+
+    // Copy with ring buffer
+    n, err := ringbuffer.New(1024).Copy(out, in.Body)
+    fmt.Println(n, err)
+}
+```
+
+The ring buffer implements `io.ReaderFrom` and `io.WriterTo` interfaces, which allows to fill either or both
+the write and read side respectively.
+
+This will provide an async method for writing or reading directly into the ring buffer.
+These functions require that "blocking" is set on the pipe.
+
+Example:
+
+```go
+func readWebsite(url string) io.ReadCloser {
+	in, _ := http.Get(url)
+
+	// Create blocking ring buffer
+	ring := ringbuffer.New(1024).SetBlocking(true)
+
+	// Read from the input in a goroutine into the ring buffer
+	go func() {
+		ring.ReadFrom(in.Body)
+		ring.CloseWriter()
+	}()
+	return ring.ReadCloser()
+}
+```
