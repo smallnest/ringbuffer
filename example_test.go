@@ -1,6 +1,11 @@
 package ringbuffer
 
-import "fmt"
+import (
+	"fmt"
+	"io"
+	"log"
+	"os"
+)
 
 func ExampleRingBuffer() {
 	rb := New(1024)
@@ -14,4 +19,21 @@ func ExampleRingBuffer() {
 	// Output: 4
 	// 1020
 	// abcd
+}
+
+func ExampleRingBuffer_Pipe() {
+	// Create pipe from a 4KB ring buffer.
+	r, w := New(4 << 10).Pipe()
+
+	go func() {
+		fmt.Fprint(w, "some io.Reader stream to be read\n")
+		w.Close()
+	}()
+
+	if _, err := io.Copy(os.Stdout, r); err != nil {
+		log.Fatal(err)
+	}
+
+	// Output:
+	// some io.Reader stream to be read
 }
