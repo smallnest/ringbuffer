@@ -104,3 +104,42 @@ func readWebsite(url string) io.ReadCloser {
 	return ring.ReadCloser()
 }
 ```
+
+# io.Pipe replacement
+
+The ring buffer can be used as a compatible, but *asynchronous* replacement of `io.Pipe`.
+
+That means that Reads and Writes will go to the ring buffer.
+Writes will complete as long as the data fits within the ring buffer.
+
+Reads will attempt to satisfy reads with data from the ring buffer.
+The read will only block if the ring buffer is empty.
+
+In the common case, where the Read and Write side can run concurrently, 
+it is safe to replace `io.Pipe()` with `(*Ringbuffer).Pipe()`.
+
+Compare the following to the [io.Pipe example](https://pkg.go.dev/io#example-Pipe):  
+
+```go
+func main() {
+	// Create pipe from a 4KB ring buffer.
+	r, w := ringbuffer.New(4 << 10).Pipe()
+
+	go func() {
+		fmt.Fprint(w, "some io.Reader stream to be read\n")
+		w.Close()
+	}()
+
+	if _, err := io.Copy(os.Stdout, r); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+When creating the pipe, the ring buffer is internally switched to blocking mode.
+
+Error reporting on Close and CloseWithError functions is similar to `io.Pipe`.
+
+It is possible to use the original ring buffer alongside the pipe functions. 
+So for example it is possible to "seed" the ring buffer with data, 
+so reads can complete at once.
