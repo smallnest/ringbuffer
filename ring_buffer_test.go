@@ -2,6 +2,7 @@ package ringbuffer
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -1244,6 +1245,81 @@ func TestWriteAfterWriterClose(t *testing.T) {
 	result := string(buf[0:n])
 	if result != "hello" {
 		t.Errorf("got: %q; want: %q", result, "hello")
+	}
+}
+
+func TestWithDeadline(t *testing.T) {
+	rb := New(100).SetBlocking(true).WithTimeout(50 * time.Millisecond)
+	var tests = []struct{ t func(chan<- error) }{
+		0: {t: func(c chan<- error) {
+			_, err := rb.Read(make([]byte, 1000))
+			c <- err
+		}},
+		1: {t: func(c chan<- error) {
+			_, err := rb.ReadByte()
+			c <- err
+		}},
+		2: {t: func(c chan<- error) {
+			_, err := rb.WriteTo(io.Discard)
+			c <- err
+		}},
+		// Write tests
+		3: {t: func(c chan<- error) {
+			// fill it
+			_, err := rb.Write(make([]byte, 100))
+			if err != nil {
+				panic(err)
+			}
+			_, err = rb.Write(make([]byte, 1000))
+			c <- err
+		}},
+		4: {t: func(c chan<- error) {
+			// fill it
+			_, err := rb.Write(make([]byte, 100))
+			if err != nil {
+				panic(err)
+			}
+			err = rb.WriteByte(42)
+			c <- err
+		}},
+		5: {t: func(c chan<- error) {
+			// fill it
+			_, err := rb.Write(make([]byte, 100))
+			if err != nil {
+				panic(err)
+			}
+			_, err = rb.WriteString("hello world!")
+			c <- err
+		}},
+		6: {t: func(c chan<- error) {
+			// fill it
+			_, err := rb.Write(make([]byte, 100))
+			if err != nil {
+				panic(err)
+			}
+			_, err = rb.ReadFrom(bytes.NewBuffer([]byte("hello world!")))
+			c <- err
+		}},
+	}
+
+	for i := range tests {
+		t.Run(fmt.Sprint("test-", i), func(t *testing.T) {
+			rb.Reset()
+			timedOut := make(chan error)
+			started := time.Now()
+			go tests[i].t(timedOut)
+			select {
+			case <-time.After(10 * time.Second):
+				t.Fatalf("deadline exceeded by 200x")
+			case err := <-timedOut:
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatal("unexpected error:", err)
+				}
+				if d := time.Since(started); d < 40*time.Millisecond {
+					t.Errorf("benchmark terminated before timeout: %v", d)
+				}
+			}
+		})
 	}
 }
 

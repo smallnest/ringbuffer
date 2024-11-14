@@ -9,6 +9,8 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
+	"time"
 	"unsafe"
 )
 
@@ -35,8 +37,8 @@ var (
 	ErrReaderClosed = errors.New("reader closed")
 )
 
-// RingBuffer is a circular buffer that implement io.ReaderWriter interface.
-// It operates like a buffered pipe, where data written to a RingBuffer
+// RingBuffer is a circular buffer that implements io.ReaderWriter interface.
+// It operates like a buffered pipe, where data is written to a RingBuffer
 // and can be read back from another goroutine.
 // It is safe to concurrently read and write RingBuffer.
 type RingBuffer struct {
@@ -47,10 +49,11 @@ type RingBuffer struct {
 	isFull    bool
 	err       error
 	block     bool
+	timeout   time.Duration
 	mu        sync.Mutex
 	wg        sync.WaitGroup
-	readCond  *sync.Cond // Signalled when data has been read.
-	writeCond *sync.Cond // Signalled when data has been written.
+	readCond  *sync.Cond // Signaled when data has been read.
+	writeCond *sync.Cond // Signaled when data has been written.
 }
 
 // New returns a new RingBuffer whose buffer has the given size.
@@ -93,6 +96,17 @@ func (r *RingBuffer) WithCancel(ctx context.Context) *RingBuffer {
 			r.CloseWithError(ctx.Err())
 		}
 	}()
+	return r
+}
+
+// WithTimeout will set a blocking read/write timeout.
+// If no reads or writes occur within the timeout,
+// the ringbuffer will be closed and context.DeadlineExceeded will be returned.
+// A timeout of 0 or less will disable timeouts (default).
+func (r *RingBuffer) WithTimeout(d time.Duration) *RingBuffer {
+	r.mu.Lock()
+	r.timeout = d
+	r.mu.Unlock()
 	return r
 }
 
@@ -158,7 +172,9 @@ func (r *RingBuffer) Read(p []byte) (n int, err error) {
 	defer r.wg.Done()
 	n, err = r.read(p)
 	for err == ErrIsEmpty && r.block {
-		r.writeCond.Wait()
+		if !r.waitWrite() {
+			return 0, context.DeadlineExceeded
+		}
 		if err = r.readErr(true); err != nil {
 			break
 		}
@@ -170,8 +186,8 @@ func (r *RingBuffer) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-// TryRead read up to len(p) bytes into p like Read but it is not blocking.
-// If it has not succeeded to acquire the lock, it return 0 as n and ErrAcquireLock.
+// TryRead read up to len(p) bytes into p like Read, but it is never blocking.
+// If it does not succeed to acquire the lock, it returns ErrAcquireLock.
 func (r *RingBuffer) TryRead(p []byte) (n int, err error) {
 	ok := r.mu.TryLock()
 	if !ok {
@@ -227,6 +243,43 @@ func (r *RingBuffer) read(p []byte) (n int, err error) {
 	return n, r.readErr(true)
 }
 
+// waitRead will wait for a read unblock.
+// Returns true if a read may have happened.
+// Returns false if waited longer than timeout.
+// Must be called when locked and returns locked.
+func (r *RingBuffer) waitRead() (ok bool) {
+	if r.timeout <= 0 {
+		r.readCond.Wait()
+		return true
+	}
+
+	gotCond := make(chan struct{})
+	var canKeepLock atomic.Bool
+	go func() {
+		r.readCond.Wait()
+		if !canKeepLock.CompareAndSwap(false, true) {
+			r.mu.Unlock()
+		}
+		close(gotCond)
+	}()
+	select {
+	case <-time.After(r.timeout):
+		// We are still racing the goroutine.
+		if !canKeepLock.CompareAndSwap(false, true) {
+			// Goroutine won.
+			// To celebrate we let it keep the lock.
+			return true
+		}
+		// We take the lock and return.
+		r.mu.Lock()
+		r.readCond.Broadcast() // Unblock goroutine
+		r.setErr(context.DeadlineExceeded, true)
+		return false
+	case <-gotCond:
+		return true
+	}
+}
+
 // ReadByte reads and returns the next byte from the input or ErrIsEmpty.
 func (r *RingBuffer) ReadByte() (b byte, err error) {
 	r.mu.Lock()
@@ -236,7 +289,9 @@ func (r *RingBuffer) ReadByte() (b byte, err error) {
 	}
 	for r.w == r.r && !r.isFull {
 		if r.block {
-			r.writeCond.Wait()
+			if !r.waitWrite() {
+				return 0, context.DeadlineExceeded
+			}
 			err = r.readErr(true)
 			if err != nil {
 				return 0, err
@@ -283,10 +338,7 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 		err = r.setErr(err, true)
 		if r.block && (err == ErrIsFull || err == ErrTooMuchDataToWrite) {
 			r.writeCond.Broadcast()
-			if r.err != nil {
-				break
-			}
-			r.readCond.Wait()
+			r.waitRead()
 			p = p[n:]
 			err = nil
 			continue
@@ -300,9 +352,47 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 	return wrote, r.setErr(err, true)
 }
 
+// waitWrite will wait for a write event.
+// Returns true if a write may have happened.
+// Returns false if waited longer than timeout.
+// Must be called when locked and returns locked.
+func (r *RingBuffer) waitWrite() (ok bool) {
+	if r.timeout <= 0 {
+		r.writeCond.Wait()
+		return true
+	}
+
+	gotCond := make(chan struct{})
+	var canKeepLock atomic.Bool
+	go func() {
+		r.writeCond.Wait()
+		if !canKeepLock.CompareAndSwap(false, true) {
+			r.mu.Unlock()
+		}
+		close(gotCond)
+	}()
+	select {
+	case <-time.After(r.timeout):
+		// We are still racing the goroutine.
+		if !canKeepLock.CompareAndSwap(false, true) {
+			// Goroutine won.
+			// To celebrate we let it keep the lock.
+			return true
+		}
+		// We take the lock and return.
+		r.mu.Lock()
+		r.writeCond.Broadcast() // Unblock goroutine
+		r.setErr(context.DeadlineExceeded, true)
+		return false
+	case <-gotCond:
+		return true
+	}
+
+}
+
 // ReadFrom will fulfill the write side of the ringbuffer.
-// This will to writes directly into the buffer, therefore avoiding a mem-copy
-// when using the Write.
+// This will do writes directly into the buffer,
+// therefore avoiding a mem-copy when using the Write.
 //
 // ReadFrom will not automatically close the buffer even after returning.
 // For that call CloseWriter().
@@ -325,7 +415,9 @@ func (r *RingBuffer) ReadFrom(rd io.Reader) (n int64, err error) {
 		}
 		if r.isFull {
 			// Wait for a read
-			r.readCond.Wait()
+			if !r.waitRead() {
+				return 0, context.DeadlineExceeded
+			}
 			continue
 		}
 
@@ -392,7 +484,9 @@ func (r *RingBuffer) WriteTo(w io.Writer) (n int64, err error) {
 		}
 		if r.r == r.w && !r.isFull {
 			// Wait for a write to make space
-			r.writeCond.Wait()
+			if !r.waitWrite() {
+				return 0, context.DeadlineExceeded
+			}
 			continue
 		}
 
@@ -456,7 +550,7 @@ func (r *RingBuffer) Copy(dst io.Writer, src io.Reader) (written int64, err erro
 }
 
 // TryWrite writes len(p) bytes from p to the underlying buf like Write, but it is not blocking.
-// If it has not succeeded to acquire the lock, it return 0 as n and ErrAcquireLock.
+// If it does not succeed to acquire the lock, it returns ErrAcquireLock.
 func (r *RingBuffer) TryWrite(p []byte) (n int, err error) {
 	if len(p) == 0 {
 		return 0, r.setErr(nil, false)
@@ -524,7 +618,7 @@ func (r *RingBuffer) write(p []byte) (n int, err error) {
 	return n, err
 }
 
-// WriteByte writes one byte into buffer, and returns ErrIsFull if buffer is full.
+// WriteByte writes one byte into buffer, and returns ErrIsFull if the buffer is full.
 func (r *RingBuffer) WriteByte(c byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -536,7 +630,9 @@ func (r *RingBuffer) WriteByte(c byte) error {
 	}
 	err := r.writeByte(c)
 	for err == ErrIsFull && r.block {
-		r.readCond.Wait()
+		if !r.waitRead() {
+			return context.DeadlineExceeded
+		}
 		err = r.setErr(r.writeByte(c), true)
 	}
 	if r.block && err == nil {
@@ -546,7 +642,7 @@ func (r *RingBuffer) WriteByte(c byte) error {
 }
 
 // TryWriteByte writes one byte into buffer without blocking.
-// If it has not succeeded to acquire the lock, it return ErrAcquireLock.
+// If it does not succeed to acquire the lock, it returns ErrAcquireLock.
 func (r *RingBuffer) TryWriteByte(c byte) error {
 	ok := r.mu.TryLock()
 	if !ok {
@@ -587,7 +683,7 @@ func (r *RingBuffer) writeByte(c byte) error {
 	return nil
 }
 
-// Length return the length of available read bytes.
+// Length returns the number of bytes that can be read without blocking.
 func (r *RingBuffer) Length() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -611,7 +707,7 @@ func (r *RingBuffer) Capacity() int {
 	return r.size
 }
 
-// Free returns the length of available bytes to write.
+// Free returns the number of bytes that can be written without blocking.
 func (r *RingBuffer) Free() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -640,7 +736,7 @@ func (r *RingBuffer) WriteString(s string) (n int, err error) {
 
 // Bytes returns all available read bytes.
 // It does not move the read pointer and only copy the available data.
-// If the dst is big enough it will be used as destination,
+// If the dst is big enough, it will be used as destination,
 // otherwise a new buffer will be allocated.
 func (r *RingBuffer) Bytes(dst []byte) []byte {
 	r.mu.Lock()
@@ -683,7 +779,7 @@ func (r *RingBuffer) Bytes(dst []byte) []byte {
 	return buf
 }
 
-// IsFull returns this ringbuffer is full.
+// IsFull returns true when the ringbuffer is full.
 func (r *RingBuffer) IsFull() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -691,7 +787,7 @@ func (r *RingBuffer) IsFull() bool {
 	return r.isFull
 }
 
-// IsEmpty returns this ringbuffer is empty.
+// IsEmpty returns true when the ringbuffer is empty.
 func (r *RingBuffer) IsEmpty() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -733,7 +829,9 @@ func (r *RingBuffer) Flush() error {
 		if !r.block {
 			return ErrIsNotEmpty
 		}
-		r.readCond.Wait()
+		if !r.waitRead() {
+			return context.DeadlineExceeded
+		}
 	}
 
 	err := r.readErr(true)
