@@ -9,7 +9,6 @@ import (
 	"errors"
 	"io"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unsafe"
 )
@@ -252,15 +251,11 @@ func (r *RingBuffer) waitRead() (ok bool) {
 		r.readCond.Wait()
 		return true
 	}
-
-	var timedOut atomic.Bool
-	defer time.AfterFunc(r.timeout, func() {
-		timedOut.Store(true)
-		r.readCond.Broadcast()
-	}).Stop()
+	start := time.Now()
+	defer time.AfterFunc(r.timeout, r.readCond.Broadcast).Stop()
 
 	r.readCond.Wait()
-	if timedOut.Load() {
+	if time.Since(start) >= r.timeout {
 		r.setErr(context.DeadlineExceeded, true)
 		return false
 	}
@@ -348,15 +343,11 @@ func (r *RingBuffer) waitWrite() (ok bool) {
 		r.writeCond.Wait()
 		return true
 	}
-
-	var timedOut atomic.Bool
-	defer time.AfterFunc(r.timeout, func() {
-		timedOut.Store(true)
-		r.writeCond.Broadcast()
-	}).Stop()
+	start := time.Now()
+	defer time.AfterFunc(r.timeout, r.writeCond.Broadcast).Stop()
 
 	r.writeCond.Wait()
-	if timedOut.Load() {
+	if time.Since(start) >= r.timeout {
 		r.setErr(context.DeadlineExceeded, true)
 		return false
 	}
