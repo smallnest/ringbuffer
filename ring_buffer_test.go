@@ -1320,6 +1320,15 @@ func TestWithDeadline(t *testing.T) {
 				}
 			}
 		})
+		t.Run(fmt.Sprint("allocs-test-", i), func(t *testing.T) {
+			timedOut := make(chan error)
+			a := testing.AllocsPerRun(5, func() {
+				rb.Reset()
+				go tests[i].t(timedOut)
+				<-timedOut
+			})
+			t.Logf("Allocs: %f", a)
+		})
 	}
 }
 

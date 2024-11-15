@@ -253,31 +253,18 @@ func (r *RingBuffer) waitRead() (ok bool) {
 		return true
 	}
 
-	gotCond := make(chan struct{})
-	var canKeepLock atomic.Bool
-	go func() {
-		r.readCond.Wait()
-		if !canKeepLock.CompareAndSwap(false, true) {
-			r.mu.Unlock()
-		}
-		close(gotCond)
-	}()
-	select {
-	case <-time.After(r.timeout):
-		// We are still racing the goroutine.
-		if !canKeepLock.CompareAndSwap(false, true) {
-			// Goroutine won.
-			// To celebrate we let it keep the lock.
-			return true
-		}
-		// We take the lock and return.
-		r.mu.Lock()
-		r.readCond.Broadcast() // Unblock goroutine
+	var timedOut atomic.Bool
+	defer time.AfterFunc(r.timeout, func() {
+		timedOut.Store(true)
+		r.readCond.Broadcast()
+	}).Stop()
+
+	r.readCond.Wait()
+	if timedOut.Load() {
 		r.setErr(context.DeadlineExceeded, true)
 		return false
-	case <-gotCond:
-		return true
 	}
+	return true
 }
 
 // ReadByte reads and returns the next byte from the input or ErrIsEmpty.
@@ -362,32 +349,18 @@ func (r *RingBuffer) waitWrite() (ok bool) {
 		return true
 	}
 
-	gotCond := make(chan struct{})
-	var canKeepLock atomic.Bool
-	go func() {
-		r.writeCond.Wait()
-		if !canKeepLock.CompareAndSwap(false, true) {
-			r.mu.Unlock()
-		}
-		close(gotCond)
-	}()
-	select {
-	case <-time.After(r.timeout):
-		// We are still racing the goroutine.
-		if !canKeepLock.CompareAndSwap(false, true) {
-			// Goroutine won.
-			// To celebrate we let it keep the lock.
-			return true
-		}
-		// We take the lock and return.
-		r.mu.Lock()
-		r.writeCond.Broadcast() // Unblock goroutine
+	var timedOut atomic.Bool
+	defer time.AfterFunc(r.timeout, func() {
+		timedOut.Store(true)
+		r.writeCond.Broadcast()
+	}).Stop()
+
+	r.writeCond.Wait()
+	if timedOut.Load() {
 		r.setErr(context.DeadlineExceeded, true)
 		return false
-	case <-gotCond:
-		return true
 	}
-
+	return true
 }
 
 // ReadFrom will fulfill the write side of the ringbuffer.
