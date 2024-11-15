@@ -59,6 +59,8 @@ Any reads or writes will return the error on next call.
 
 In blocking mode errors are stateful and the same error will be returned until `rb.Reset()` is called.
 
+It is possible to set a deadline for blocking Read/Write operations using `rb.WithDeadline(time.Duration)`.
+
 # io.Copy replacement
 
 The ring buffer can replace `io.Copy` and `io.CopyBuffer` to do async copying through the ring buffer.
