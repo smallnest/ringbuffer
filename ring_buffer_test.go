@@ -1249,20 +1249,26 @@ func TestWriteAfterWriterClose(t *testing.T) {
 }
 
 func TestWithDeadline(t *testing.T) {
-	rb := New(100).SetBlocking(true).WithTimeout(50 * time.Millisecond)
-	var tests = []struct{ t func(chan<- error) }{
+	rb := New(100).SetBlocking(true)
+	tests := []struct {
+		// test function that will fill buffer and block either on read or write.
+		t func(chan<- error)
+		// Set one, based on if we expect to block read or write
+		r, w bool
+	}{
+		// Read tests.
 		0: {t: func(c chan<- error) {
 			_, err := rb.Read(make([]byte, 1000))
 			c <- err
-		}},
+		}, r: true},
 		1: {t: func(c chan<- error) {
 			_, err := rb.ReadByte()
 			c <- err
-		}},
+		}, r: true},
 		2: {t: func(c chan<- error) {
 			_, err := rb.WriteTo(io.Discard)
 			c <- err
-		}},
+		}, r: true},
 		// Write tests
 		3: {t: func(c chan<- error) {
 			// fill it
@@ -1272,7 +1278,7 @@ func TestWithDeadline(t *testing.T) {
 			}
 			_, err = rb.Write(make([]byte, 1000))
 			c <- err
-		}},
+		}, w: true},
 		4: {t: func(c chan<- error) {
 			// fill it
 			_, err := rb.Write(make([]byte, 100))
@@ -1281,7 +1287,7 @@ func TestWithDeadline(t *testing.T) {
 			}
 			err = rb.WriteByte(42)
 			c <- err
-		}},
+		}, w: true},
 		5: {t: func(c chan<- error) {
 			// fill it
 			_, err := rb.Write(make([]byte, 100))
@@ -1290,7 +1296,7 @@ func TestWithDeadline(t *testing.T) {
 			}
 			_, err = rb.WriteString("hello world!")
 			c <- err
-		}},
+		}, w: true},
 		6: {t: func(c chan<- error) {
 			// fill it
 			_, err := rb.Write(make([]byte, 100))
@@ -1299,11 +1305,12 @@ func TestWithDeadline(t *testing.T) {
 			}
 			_, err = rb.ReadFrom(bytes.NewBuffer([]byte("hello world!")))
 			c <- err
-		}},
+		}, w: true},
 	}
 
 	for i := range tests {
-		t.Run(fmt.Sprint("test-", i), func(t *testing.T) {
+		t.Run(fmt.Sprint("both-", i), func(t *testing.T) {
+			rb.WithTimeout(50 * time.Millisecond)
 			rb.Reset()
 			timedOut := make(chan error)
 			started := time.Now()
@@ -1320,14 +1327,67 @@ func TestWithDeadline(t *testing.T) {
 				}
 			}
 		})
+		t.Run(fmt.Sprint("read-", i), func(t *testing.T) {
+			rb.Reset()
+			rb.WithTimeout(0).WithReadTimeout(50 * time.Millisecond)
+			timedOut := make(chan error)
+			started := time.Now()
+			go tests[i].t(timedOut)
+			select {
+			case <-time.After(100 * time.Millisecond):
+				if tests[i].r {
+					t.Fatalf("deadline exceeded by 200x")
+				}
+				rb.CloseWithError(errors.New("test error"))
+				<-timedOut
+			case err := <-timedOut:
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatal("unexpected error:", err)
+				}
+				if tests[i].w {
+					t.Errorf("terminated on write")
+				}
+				if d := time.Since(started); d < 40*time.Millisecond {
+					t.Errorf("benchmark terminated before timeout: %v", d)
+				}
+			}
+		})
+		t.Run(fmt.Sprint("write-", i), func(t *testing.T) {
+			rb.Reset()
+			rb.WithTimeout(0).WithWriteTimeout(50 * time.Millisecond)
+			timedOut := make(chan error)
+			started := time.Now()
+			go tests[i].t(timedOut)
+			select {
+			case <-time.After(100 * time.Millisecond):
+				if tests[i].w {
+					t.Fatalf("deadline exceeded on write")
+				}
+				rb.CloseWithError(errors.New("test error"))
+				<-timedOut
+			case err := <-timedOut:
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatal("unexpected error:", err)
+				}
+				if tests[i].r {
+					t.Errorf("terminated on read")
+				}
+				if d := time.Since(started); d < 40*time.Millisecond {
+					t.Errorf("benchmark terminated before timeout: %v", d)
+				}
+			}
+		})
+
 		t.Run(fmt.Sprint("allocs-test-", i), func(t *testing.T) {
+			rb.Reset()
+			rb.WithTimeout(50 * time.Millisecond)
 			timedOut := make(chan error)
 			a := testing.AllocsPerRun(5, func() {
 				rb.Reset()
 				go tests[i].t(timedOut)
 				<-timedOut
 			})
-			t.Logf("Allocs: %f", a)
+			t.Logf("Average Allocs: %.1f", a)
 		})
 	}
 }

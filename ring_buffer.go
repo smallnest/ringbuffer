@@ -48,7 +48,8 @@ type RingBuffer struct {
 	isFull    bool
 	err       error
 	block     bool
-	timeout   time.Duration
+	rTimeout  time.Duration // Applies to writes (waits for the read condition)
+	wTimeout  time.Duration // Applies to read (wait for the write condition)
 	mu        sync.Mutex
 	wg        sync.WaitGroup
 	readCond  *sync.Cond // Signaled when data has been read.
@@ -104,7 +105,36 @@ func (r *RingBuffer) WithCancel(ctx context.Context) *RingBuffer {
 // A timeout of 0 or less will disable timeouts (default).
 func (r *RingBuffer) WithTimeout(d time.Duration) *RingBuffer {
 	r.mu.Lock()
-	r.timeout = d
+	r.rTimeout = d
+	r.wTimeout = d
+	r.mu.Unlock()
+	return r
+}
+
+// WithReadTimeout will set a blocking read timeout.
+// Reads refers to any call that reads data from the buffer.
+// If no writes occur within the timeout,
+// the ringbuffer will be closed and context.DeadlineExceeded will be returned.
+// A timeout of 0 or less will disable timeouts (default).
+func (r *RingBuffer) WithReadTimeout(d time.Duration) *RingBuffer {
+	r.mu.Lock()
+	// Read operations wait for writes to complete,
+	// therefore we set the wTimeout.
+	r.wTimeout = d
+	r.mu.Unlock()
+	return r
+}
+
+// WithWriteTimeout will set a blocking write timeout.
+// Write refers to any call that writes data into the buffer.
+// If no reads occur within the timeout,
+// the ringbuffer will be closed and context.DeadlineExceeded will be returned.
+// A timeout of 0 or less will disable timeouts (default).
+func (r *RingBuffer) WithWriteTimeout(d time.Duration) *RingBuffer {
+	r.mu.Lock()
+	// Write operations wait for reads to complete,
+	// therefore we set the rTimeout.
+	r.rTimeout = d
 	r.mu.Unlock()
 	return r
 }
@@ -242,20 +272,19 @@ func (r *RingBuffer) read(p []byte) (n int, err error) {
 	return n, r.readErr(true)
 }
 
-// waitRead will wait for a read unblock.
 // Returns true if a read may have happened.
-// Returns false if waited longer than timeout.
+// Returns false if waited longer than rTimeout.
 // Must be called when locked and returns locked.
 func (r *RingBuffer) waitRead() (ok bool) {
-	if r.timeout <= 0 {
+	if r.rTimeout <= 0 {
 		r.readCond.Wait()
 		return true
 	}
 	start := time.Now()
-	defer time.AfterFunc(r.timeout, r.readCond.Broadcast).Stop()
+	defer time.AfterFunc(r.rTimeout, r.readCond.Broadcast).Stop()
 
 	r.readCond.Wait()
-	if time.Since(start) >= r.timeout {
+	if time.Since(start) >= r.rTimeout {
 		r.setErr(context.DeadlineExceeded, true)
 		return false
 	}
@@ -336,18 +365,19 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 
 // waitWrite will wait for a write event.
 // Returns true if a write may have happened.
-// Returns false if waited longer than timeout.
+// Returns false if waited longer than wTimeout.
 // Must be called when locked and returns locked.
 func (r *RingBuffer) waitWrite() (ok bool) {
-	if r.timeout <= 0 {
+	if r.wTimeout <= 0 {
 		r.writeCond.Wait()
 		return true
 	}
+
 	start := time.Now()
-	defer time.AfterFunc(r.timeout, r.writeCond.Broadcast).Stop()
+	defer time.AfterFunc(r.wTimeout, r.writeCond.Broadcast).Stop()
 
 	r.writeCond.Wait()
-	if time.Since(start) >= r.timeout {
+	if time.Since(start) >= r.wTimeout {
 		r.setErr(context.DeadlineExceeded, true)
 		return false
 	}
