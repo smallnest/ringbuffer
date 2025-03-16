@@ -958,6 +958,157 @@ func TestRingBuffer_Copy(t *testing.T) {
 	}
 }
 
+type errormock struct {
+	rerr    error
+	read    int
+	rleft   int
+	werr    error
+	written int
+	wleft   int
+}
+
+var _ io.Reader = &errormock{}
+var _ io.Writer = &errormock{}
+
+func (e *errormock) Read(p []byte) (n int, err error) {
+	switch {
+	case e.rleft <= 0:
+		err = e.rerr
+
+	case len(p) > e.rleft:
+		n = e.rleft
+
+	default:
+		n = len(p)
+	}
+
+	e.rleft -= n
+	e.read += n
+
+	return
+}
+
+func (e *errormock) Write(p []byte) (n int, err error) {
+	switch {
+	case e.wleft <= 0:
+		err = e.werr
+
+	case len(p) > e.wleft:
+		n = e.wleft
+		err = e.werr
+
+	default:
+		n = len(p)
+	}
+
+	e.wleft -= n
+	e.written += n
+
+	return
+}
+
+func TestRingBuffer_ReadFrom_Error(t *testing.T) {
+	const bufsize = 4 << 10
+
+	cases := []int{0, 1, bufsize, bufsize - 1, bufsize + 1}
+
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("limit=%d", c), func(t *testing.T) {
+			rb := New(bufsize).SetBlocking(true)
+			tester := &errormock{rerr: io.ErrUnexpectedEOF, rleft: c, wleft: 10 << 10}
+
+			// drain the buffer
+			go func() {
+				_, _ = io.Copy(io.Discard, rb)
+			}()
+
+			copied, err := rb.ReadFrom(tester)
+
+			if err != io.ErrUnexpectedEOF {
+				t.Errorf("expect io.ErrUnexpectedEOF but got %v", err)
+			}
+
+			if copied != int64(tester.read) {
+				t.Errorf("expect %d bytes copied but got %d", c, copied)
+			}
+		})
+	}
+}
+
+func TestRingBuffer_WriteTo_Error(t *testing.T) {
+	const bufsize = 4 << 10
+
+	cases := []int{0, 1, bufsize, bufsize - 1, bufsize + 1}
+
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("limit=%d", c), func(t *testing.T) {
+			rb := New(bufsize).SetBlocking(true)
+			tester := &errormock{werr: io.ErrClosedPipe, wleft: c}
+
+			// fill the buffer with enough data
+			go func() {
+				_, _ = io.Copy(rb, bytes.NewReader(make([]byte, bufsize*2)))
+			}()
+
+			copied, err := rb.WriteTo(tester)
+
+			if err != io.ErrClosedPipe {
+				t.Errorf("expect io.ErrClosedPipe but got %v", err)
+			}
+
+			if copied != int64(tester.written) {
+				t.Errorf("expect %d bytes copied but got %d", c, copied)
+			}
+		})
+	}
+}
+
+func TestRingBuffer_Copy_ReadError(t *testing.T) {
+	const bufsize = 4 << 10
+
+	cases := []int{0, 1, bufsize, bufsize - 1, bufsize + 1}
+
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("limit=%d", c), func(t *testing.T) {
+			rb := New(bufsize)
+			tester := &errormock{rerr: io.ErrUnexpectedEOF, rleft: c, wleft: 10 << 10}
+
+			copied, err := rb.Copy(tester, tester)
+
+			if err != io.ErrUnexpectedEOF {
+				t.Errorf("expect io.ErrUnexpectedEOF but got %v", err)
+			}
+
+			if copied != int64(tester.written) {
+				t.Errorf("expect %d bytes copied but got %d", c, copied)
+			}
+		})
+	}
+}
+
+func TestRingBuffer_Copy_WriteError(t *testing.T) {
+	const bufsize = 4 << 10
+
+	cases := []int{0, 1, bufsize, bufsize - 1, bufsize + 1}
+
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("limit=%d", c), func(t *testing.T) {
+			rb := New(bufsize)
+			tester := &errormock{rleft: 10 << 10, werr: io.ErrClosedPipe, wleft: c}
+
+			copied, err := rb.Copy(tester, tester)
+
+			if err != io.ErrClosedPipe {
+				t.Errorf("expect io.ErrUnexpectedEOF but got %v", err)
+			}
+
+			if copied != int64(tester.written) {
+				t.Errorf("expect %d bytes copied but got %d", c, copied)
+			}
+		})
+	}
+}
+
 func TestRingBuffer_ByteInterface(t *testing.T) {
 	defer timeout(5 * time.Second)()
 	rb := New(2)
