@@ -428,7 +428,7 @@ func (r *RingBuffer) ReadFrom(rd io.Reader) (n int64, err error) {
 		nr, rerr := rd.Read(toRead)
 		r.mu.Lock()
 		if rerr != nil && rerr != io.EOF {
-			err = r.setErr(err, true)
+			err = r.setErr(rerr, true)
 			break
 		}
 		if nr == 0 && rerr == nil {
@@ -500,6 +500,7 @@ func (r *RingBuffer) WriteTo(w io.Writer) (n int64, err error) {
 		nr, werr := w.Write(toWrite)
 		r.mu.Lock()
 		if werr != nil {
+			n += int64(nr)
 			err = r.setErr(werr, true)
 			break
 		}
