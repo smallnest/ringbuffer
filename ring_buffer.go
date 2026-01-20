@@ -34,6 +34,9 @@ var (
 
 	// ErrReaderClosed is returned when a ReadClosed closed the ringbuffer.
 	ErrReaderClosed = errors.New("reader closed")
+
+	// ErrReset is returned when Reset() is called, causing pending operations to abort.
+	ErrReset = errors.New("reset called")
 )
 
 // RingBuffer is a circular buffer that implements io.ReaderWriter interface.
@@ -237,36 +240,50 @@ func (r *RingBuffer) TryRead(p []byte) (n int, err error) {
 	return n, err
 }
 
+// copyFromBuffer copies data from the ring buffer to dst without modifying the read pointer.
+// Returns the number of bytes copied. Does not check for errors.
+func (r *RingBuffer) copyFromBuffer(dst []byte) int {
+	if r.w == r.r && !r.isFull {
+		return 0
+	}
+
+	var n int
+	if r.w > r.r {
+		n = r.w - r.r
+		if n > len(dst) {
+			n = len(dst)
+		}
+		copy(dst, r.buf[r.r:r.r+n])
+		return n
+	}
+
+	n = r.size - r.r + r.w
+	if n > len(dst) {
+		n = len(dst)
+	}
+
+	if r.r+n <= r.size {
+		copy(dst, r.buf[r.r:r.r+n])
+	} else {
+		c1 := r.size - r.r
+		copy(dst, r.buf[r.r:r.size])
+		c2 := n - c1
+		copy(dst[c1:], r.buf[0:c2])
+	}
+	return n
+}
+
 func (r *RingBuffer) read(p []byte) (n int, err error) {
 	if r.w == r.r && !r.isFull {
 		return 0, ErrIsEmpty
 	}
 
-	if r.w > r.r {
-		n = r.w - r.r
-		if n > len(p) {
-			n = len(p)
-		}
-		copy(p, r.buf[r.r:r.r+n])
-		r.r = (r.r + n) % r.size
-		return
+	n = r.copyFromBuffer(p)
+	if n == 0 {
+		return 0, ErrIsEmpty
 	}
 
-	n = r.size - r.r + r.w
-	if n > len(p) {
-		n = len(p)
-	}
-
-	if r.r+n <= r.size {
-		copy(p, r.buf[r.r:r.r+n])
-	} else {
-		c1 := r.size - r.r
-		copy(p, r.buf[r.r:r.size])
-		c2 := n - c1
-		copy(p[c1:], r.buf[0:c2])
-	}
 	r.r = (r.r + n) % r.size
-
 	r.isFull = false
 
 	return n, r.readErr(true)
@@ -321,6 +338,19 @@ func (r *RingBuffer) ReadByte() (b byte, err error) {
 	return b, r.readErr(true)
 }
 
+// checkWriteErr checks if the buffer has an error that should prevent writes.
+// Returns the appropriate error to return (nil if write can proceed).
+// Must be called with mutex held.
+func (r *RingBuffer) checkWriteErr() error {
+	if r.err == nil {
+		return nil
+	}
+	if r.err == io.EOF {
+		return ErrWriteOnClosed
+	}
+	return r.err
+}
+
 // Write writes len(p) bytes from p to the underlying buf.
 // It returns the number of bytes written from p (0 <= n <= len(p))
 // and any error encountered that caused the write to stop early.
@@ -333,10 +363,7 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if err := r.err; err != nil {
-		if err == io.EOF {
-			err = ErrWriteOnClosed
-		}
+	if err := r.checkWriteErr(); err != nil {
 		return 0, err
 	}
 	wrote := 0
@@ -555,10 +582,7 @@ func (r *RingBuffer) TryWrite(p []byte) (n int, err error) {
 		return 0, ErrAcquireLock
 	}
 	defer r.mu.Unlock()
-	if err := r.err; err != nil {
-		if err == io.EOF {
-			err = ErrWriteOnClosed
-		}
+	if err := r.checkWriteErr(); err != nil {
 		return 0, err
 	}
 
@@ -617,10 +641,7 @@ func (r *RingBuffer) write(p []byte) (n int, err error) {
 func (r *RingBuffer) WriteByte(c byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if err := r.err; err != nil {
-		if err == io.EOF {
-			err = ErrWriteOnClosed
-		}
+	if err := r.checkWriteErr(); err != nil {
 		return err
 	}
 	err := r.writeByte(c)
@@ -644,10 +665,7 @@ func (r *RingBuffer) TryWriteByte(c byte) error {
 		return ErrAcquireLock
 	}
 	defer r.mu.Unlock()
-	if err := r.err; err != nil {
-		if err == io.EOF {
-			err = ErrWriteOnClosed
-		}
+	if err := r.checkWriteErr(); err != nil {
 		return err
 	}
 
@@ -842,7 +860,7 @@ func (r *RingBuffer) Reset() {
 	defer r.mu.Unlock()
 
 	// Set error so any readers/writers will return immediately.
-	r.setErr(errors.New("reset called"), true)
+	r.setErr(ErrReset, true)
 	if r.block {
 		r.readCond.Broadcast()
 		r.writeCond.Broadcast()
@@ -910,32 +928,9 @@ func (r *RingBuffer) Peek(p []byte) (n int, err error) {
 }
 
 func (r *RingBuffer) peek(p []byte) (n int, err error) {
-	if r.w == r.r && !r.isFull {
+	n = r.copyFromBuffer(p)
+	if n == 0 {
 		return 0, ErrIsEmpty
 	}
-
-	if r.w > r.r {
-		n = r.w - r.r
-		if n > len(p) {
-			n = len(p)
-		}
-		copy(p, r.buf[r.r:r.r+n])
-		return
-	}
-
-	n = r.size - r.r + r.w
-	if n > len(p) {
-		n = len(p)
-	}
-
-	if r.r+n <= r.size {
-		copy(p, r.buf[r.r:r.r+n])
-	} else {
-		c1 := r.size - r.r
-		copy(p, r.buf[r.r:r.size])
-		c2 := n - c1
-		copy(p[c1:], r.buf[0:c2])
-	}
-
 	return n, r.readErr(true)
 }

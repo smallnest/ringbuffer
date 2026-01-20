@@ -1579,3 +1579,250 @@ func TestRingBuffer_Peek(t *testing.T) {
 		t.Fatalf("expected %s, got %s", string(data), string(buf))
 	}
 }
+
+func TestRingBuffer_Peek_WrapAround(t *testing.T) {
+	rb := New(16)
+
+	// Fill buffer with pattern that causes wrap-around
+	data := []byte("abcdefgh")
+	rb.Write(data)       // r=0, w=8
+	rb.Read(make([]byte, 4)) // r=4, w=8
+
+	// Write more to cause wrap-around
+	rb.Write([]byte("ijkl"))   // r=4, w=12, no wrap yet
+	rb.Read(make([]byte, 4))  // r=8, w=12
+	rb.Write([]byte("mnop"))    // r=8, w=16 (wrapped to 0)
+
+	// Peek should correctly read wrapped buffer
+	buf := make([]byte, 8)
+	n, err := rb.Peek(buf)
+	if err != nil {
+		t.Fatalf("Peek failed: %v", err)
+	}
+	if n != 8 {
+		t.Fatalf("Expected 8 bytes, got %d", n)
+	}
+	expected := []byte("ijklmnop")
+	if !bytes.Equal(buf, expected) {
+		t.Fatalf("Expected %v, got %v", expected, buf)
+	}
+
+	// Verify read pointer unchanged
+	readBuf := make([]byte, 8)
+	rb.Read(readBuf)
+	if !bytes.Equal(readBuf, expected) {
+		t.Fatalf("Read after Peek returned different data")
+	}
+}
+
+func TestRingBuffer_Peek_FullBuffer(t *testing.T) {
+	rb := New(8)
+
+	// Fill completely
+	data := []byte("abcdefgh")
+	rb.Write(data)
+
+	// Peek should work on full buffer
+	buf := make([]byte, 8)
+	n, err := rb.Peek(buf)
+	if err != nil {
+		t.Fatalf("Peek failed: %v", err)
+	}
+	if n != 8 {
+		t.Fatalf("Expected 8 bytes, got %d", n)
+	}
+	if !bytes.Equal(buf, data) {
+		t.Fatalf("Peek returned wrong data")
+	}
+
+	// Read pointer unchanged
+	if rb.Length() != 8 {
+		t.Fatalf("Length changed after Peek")
+	}
+}
+
+func TestRingBuffer_Peek_Partial(t *testing.T) {
+	rb := New(16)
+	data := []byte("hello world")
+	rb.Write(data)
+
+	// Peek fewer bytes than available
+	buf := make([]byte, 5)
+	n, err := rb.Peek(buf)
+	if err != nil {
+		t.Fatalf("Peek failed: %v", err)
+	}
+	if n != 5 {
+		t.Fatalf("Expected 5 bytes, got %d", n)
+	}
+	expected := []byte("hello")
+	if !bytes.Equal(buf, expected) {
+		t.Fatalf("Expected %v, got %v", expected, buf)
+	}
+
+	// Verify buffer still has all data
+	allData := rb.Bytes(nil)
+	if !bytes.Equal(allData, data) {
+		t.Fatalf("Peek modified buffer")
+	}
+}
+
+func TestRingBuffer_Bytes_BufferReuse(t *testing.T) {
+	rb := New(32)
+
+	// Create a reusable buffer with capacity
+	dst := make([]byte, 0, 64)
+
+	// First call - should use dst buffer if capacity sufficient
+	rb.Write([]byte("first data"))
+	result := rb.Bytes(dst)
+	if len(result) != len("first data") {
+		t.Fatalf("Wrong length: %d", len(result))
+	}
+	if !bytes.Equal(result, []byte("first data")) {
+		t.Fatalf("Wrong data: %s", string(result))
+	}
+	// Verify buffer was reused (cap >= 64 means dst capacity was used)
+	if cap(result) < 64 {
+		t.Fatalf("Expected buffer reuse, but got cap=%d (< 64)", cap(result))
+	}
+
+	// Second call with different data size
+	rb.Reset()
+	rb.Write([]byte("different"))
+	result = rb.Bytes(result)
+	if string(result) != "different" {
+		t.Fatalf("Wrong data: %s", string(result))
+	}
+}
+
+func TestRingBuffer_Bytes_SmallDst(t *testing.T) {
+	rb := New(16)
+
+	// Write data
+	data := []byte("hello world")
+	rb.Write(data)
+
+	// Try to use a buffer that's too small
+	smallDst := make([]byte, 0, 4) // cap=4, but we need 11 bytes
+	result := rb.Bytes(smallDst)
+
+	// Should allocate new buffer
+	if cap(result) < 11 {
+		t.Fatalf("Expected new buffer allocation, got cap=%d", cap(result))
+	}
+	if !bytes.Equal(result, data) {
+		t.Fatalf("Wrong data: %s", string(result))
+	}
+}
+
+func TestRingBuffer_Bytes_WrapAround(t *testing.T) {
+	rb := New(16)
+
+	// Create wrap-around scenario
+	rb.Write([]byte("abcd"))  // r=0, w=4
+	rb.Read(make([]byte, 2))  // r=2, w=4
+	rb.Write([]byte("efghijklmnop"))  // r=2, w=14
+
+	// Get bytes
+	result := rb.Bytes(nil)
+	expected := []byte("cdefghijklmnop")
+	if !bytes.Equal(result, expected) {
+		t.Fatalf("Expected %v, got %v", expected, result)
+	}
+}
+
+func TestRingBuffer_TryContention(t *testing.T) {
+	rb := New(1024)
+	const numGoroutines = 50
+	const opsPerGoroutine = 1000
+
+	var wg sync.WaitGroup
+	errors := make(chan error, numGoroutines*2)
+
+	// Reader goroutines
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			buf := make([]byte, 16)
+			for j := 0; j < opsPerGoroutine; j++ {
+				n, err := rb.TryRead(buf)
+				if err != nil && err != ErrAcquireLock && err != ErrIsEmpty {
+					errors <- fmt.Errorf("TryRead error: %w", err)
+					return
+				}
+				if err == nil && n > 0 {
+					// Process data
+					_ = buf[:n]
+				}
+			}
+		}()
+	}
+
+	// Writer goroutines
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			data := []byte("test data content")
+			for j := 0; j < opsPerGoroutine; j++ {
+				n, err := rb.TryWrite(data)
+				if err != nil && err != ErrAcquireLock && err != ErrIsFull && err != ErrTooMuchDataToWrite {
+					errors <- fmt.Errorf("TryWrite error: %w", err)
+					return
+				}
+				if err == nil {
+					// Verify write count
+					_ = n
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errors)
+
+	for err := range errors {
+		t.Fatal(err)
+	}
+
+	// Final verification
+	rb.Reset()
+	finalBuf := make([]byte, 1024)
+	rb.Write(finalBuf)
+	readBuf := make([]byte, 1024)
+	n, err := rb.Read(readBuf)
+	if err != nil {
+		t.Fatalf("Final read failed: %v", err)
+	}
+	if n != 1024 {
+		t.Fatalf("Final read got %d bytes", n)
+	}
+}
+
+func TestRingBuffer_TryLockSuccess(t *testing.T) {
+	rb := New(64)
+
+	// Successful TryWrite
+	n, err := rb.TryWrite([]byte("test"))
+	if err != nil {
+		t.Fatalf("TryWrite failed: %v", err)
+	}
+	if n != 4 {
+		t.Fatalf("Expected 4 bytes, got %d", n)
+	}
+
+	// Successful TryRead
+	buf := make([]byte, 4)
+	n, err = rb.TryRead(buf)
+	if err != nil {
+		t.Fatalf("TryRead failed: %v", err)
+	}
+	if n != 4 {
+		t.Fatalf("Expected 4 bytes, got %d", n)
+	}
+	if string(buf) != "test" {
+		t.Fatalf("Wrong data: %s", string(buf))
+	}
+}
