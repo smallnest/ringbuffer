@@ -20,7 +20,7 @@ COLOR_YELLOW=\033[33m
 COLOR_BLUE=\033[34m
 
 # Default target
-all: fmt-check vet test
+all: fmt-check vet lint test
 
 ## help: Display this help message
 help:

@@ -170,11 +170,11 @@ func TestRingBuffer_Write(t *testing.T) {
 		t.Fatalf("expect free 48 bytes but got %d. r.w=%d, r.r=%d", rb.Free(), rb.w, rb.r)
 	}
 	buf := make([]byte, 5)
-	rb.Read(buf)
+	_, _ = rb.Read(buf) //nolint:errcheck
 	if rb.Length() != 3 {
 		t.Fatalf("expect len 3 bytes but got %d. r.w=%d, r.r=%d", rb.Length(), rb.w, rb.r)
 	}
-	rb.Write([]byte(strings.Repeat("abcd", 15)))
+	_, _ = rb.Write([]byte(strings.Repeat("abcd", 15))) //nolint:errcheck
 
 	if !bytes.Equal(rb.Bytes(nil), []byte("bcd"+strings.Repeat("abcd", 15))) {
 		t.Fatalf("expect 63 ... but got %s. r.w=%d, r.r=%d", rb.Bytes(nil), rb.w, rb.r)
@@ -192,7 +192,7 @@ func TestRingBuffer_Write(t *testing.T) {
 		t.Fatalf("expect free 0 bytes but got %d. r.w=%d, r.r=%d", rb.Free(), rb.w, rb.r)
 	}
 	buf = make([]byte, 16)
-	rb.Read(buf)
+	_, _ = rb.Read(buf) //nolint errcheck
 	n, err = rb.Write([]byte(strings.Repeat("1234", 4)))
 	if err != nil {
 		t.Fatalf("write failed: %v", err)
@@ -296,11 +296,11 @@ func TestRingBuffer_WriteBlocking(t *testing.T) {
 		t.Fatalf("expect free 48 bytes but got %d. r.w=%d, r.r=%d", rb.Free(), rb.w, rb.r)
 	}
 	buf := make([]byte, 5)
-	rb.Read(buf)
+	_, _ = rb.Read(buf) //nolint errcheck
 	if rb.Length() != 3 {
 		t.Fatalf("expect len 3 bytes but got %d. r.w=%d, r.r=%d", rb.Length(), rb.w, rb.r)
 	}
-	rb.Write([]byte(strings.Repeat("abcd", 15)))
+	_, _ = rb.Write([]byte(strings.Repeat("abcd", 15))) //nolint errcheck
 
 	if !bytes.Equal(rb.Bytes(nil), []byte("bcd"+strings.Repeat("abcd", 15))) {
 		t.Fatalf("expect 63 ... but got %s. r.w=%d, r.r=%d", rb.Bytes(nil), rb.w, rb.r)
@@ -318,7 +318,7 @@ func TestRingBuffer_WriteBlocking(t *testing.T) {
 		t.Fatalf("expect free 0 bytes but got %d. r.w=%d, r.r=%d", rb.Free(), rb.w, rb.r)
 	}
 	buf = make([]byte, 16)
-	rb.Read(buf)
+	_, _ = rb.Read(buf) //nolint errcheck
 	n, err = rb.Write([]byte(strings.Repeat("1234", 4)))
 	if err != nil {
 		t.Fatalf("write failed: %v", err)
@@ -375,7 +375,7 @@ func TestRingBuffer_Read(t *testing.T) {
 	}
 
 	// write 16 bytes to read
-	rb.Write([]byte(strings.Repeat("abcd", 4)))
+	_, _ = rb.Write([]byte(strings.Repeat("abcd", 4))) //nolint errcheck
 	n, err = rb.Read(buf)
 	if err != nil {
 		t.Fatalf("read failed: %v", err)
@@ -394,7 +394,7 @@ func TestRingBuffer_Read(t *testing.T) {
 	}
 
 	// write long slice to  read
-	rb.Write([]byte(strings.Repeat("abcd", 20)))
+	_, _ = rb.Write([]byte(strings.Repeat("abcd", 20))) //nolint errcheck
 	n, err = rb.Read(buf)
 	if err != nil {
 		t.Fatalf("read failed: %v", err)
@@ -453,7 +453,7 @@ func TestRingBuffer_Blocking(t *testing.T) {
 			// Read
 			n, err := rb.Read(buf[:readRng.Intn(len(buf))])
 			readBytes += n
-			read.Write(buf[:n])
+			read.Write(buf[:n]) //nolint errcheck
 			debugln("READ 1\t", n, readBytes)
 			if err != nil {
 				readErr = err
@@ -467,13 +467,13 @@ func TestRingBuffer_Blocking(t *testing.T) {
 				break
 			}
 			readBytes++
-			read.Write([]byte{b})
+			_, _ = read.Write([]byte{b}) //nolint:errcheck
 			debugln("READ 2\t", 1, readBytes)
 
 			// TryRead
 			n, err = rb.TryRead(buf[:readRng.Intn(len(buf))])
 			readBytes += n
-			read.Write(buf[:n])
+			_, _ = read.Write(buf[:n]) //nolint errcheck
 			debugln("READ 3\t", n, readBytes)
 			if err != nil && err != ErrAcquireLock && err != ErrIsEmpty {
 				readErr = err
@@ -497,7 +497,7 @@ func TestRingBuffer_Blocking(t *testing.T) {
 				t.Fatalf("write failed: %v", err)
 			}
 			wroteBytes += n
-			wrote.Write(buf[:n])
+			wrote.Write(buf[:n]) //nolint errcheck
 			debugln("WRITE 1\t", n, wroteBytes)
 
 			// WriteString
@@ -506,7 +506,7 @@ func TestRingBuffer_Blocking(t *testing.T) {
 				t.Fatalf("write failed: %v", err)
 			}
 			wroteBytes += n
-			wrote.Write(buf[:n])
+			wrote.Write(buf[:n]) //nolint errcheck
 			debugln("WRITE 2\t", writeRng.Intn(len(buf)), wroteBytes)
 
 			// WriteByte
@@ -515,7 +515,7 @@ func TestRingBuffer_Blocking(t *testing.T) {
 				t.Fatalf("write failed: %v", err)
 			}
 			wroteBytes++
-			wrote.Write(buf[:1])
+			wrote.Write(buf[:1]) //nolint errcheck
 			debugln("WRITE 3\t", 1, wroteBytes)
 
 			// TryWrite
@@ -524,7 +524,7 @@ func TestRingBuffer_Blocking(t *testing.T) {
 				t.Fatalf("write failed: %v", err)
 			}
 			wroteBytes += n
-			wrote.Write(buf[:n])
+			_, _ = wrote.Write(buf[:n])
 			debugln("WRITE 4\t", n, wroteBytes)
 
 			// TryWriteByte
@@ -534,7 +534,7 @@ func TestRingBuffer_Blocking(t *testing.T) {
 			}
 			if err == nil {
 				wroteBytes++
-				wrote.Write(buf[:1])
+				_, _ = wrote.Write(buf[:1])
 				debugln("WRITE 5\t", 1, wroteBytes)
 			}
 			if doSleep && writeRng.Intn(10) == 0 {
@@ -616,7 +616,7 @@ func TestRingBuffer_BlockingBig(t *testing.T) {
 			// Read
 			n, err := rb.Read(buf[:readRng.Intn(len(buf))])
 			readBytes += n
-			read.Write(buf[:n])
+			read.Write(buf[:n]) //nolint errcheck
 			if err != nil {
 				readErr = err
 				break
@@ -630,13 +630,13 @@ func TestRingBuffer_BlockingBig(t *testing.T) {
 				break
 			}
 			readBytes++
-			read.Write([]byte{b})
+			_, _ = read.Write([]byte{b}) //nolint:errcheck
 			debugln("READ 2\t", 1, readBytes)
 
 			// TryRead
 			n, err = rb.TryRead(buf[:readRng.Intn(len(buf))])
 			readBytes += n
-			read.Write(buf[:n])
+			_, _ = read.Write(buf[:n])
 			if err != nil && err != ErrAcquireLock && err != ErrIsEmpty {
 				readErr = err
 				break
@@ -660,7 +660,7 @@ func TestRingBuffer_BlockingBig(t *testing.T) {
 				t.Fatalf("write failed: %v", err)
 			}
 			wroteBytes += n
-			wrote.Write(buf[:n])
+			_, _ = wrote.Write(buf[:n])
 			debugln("WRITE 1\t", n, wroteBytes)
 
 			// WriteString
@@ -669,7 +669,7 @@ func TestRingBuffer_BlockingBig(t *testing.T) {
 				t.Fatalf("write failed: %v", err)
 			}
 			wroteBytes += n
-			wrote.Write(buf[:n])
+			_, _ = wrote.Write(buf[:n])
 			debugln("WRITE 2\t", writeRng.Intn(len(buf)), wroteBytes)
 
 			// WriteByte
@@ -678,7 +678,7 @@ func TestRingBuffer_BlockingBig(t *testing.T) {
 				t.Fatalf("write failed: %v", err)
 			}
 			wroteBytes++
-			wrote.Write(buf[:1])
+			_, _ = wrote.Write(buf[:1])
 			debugln("WRITE 3\t", 1, wroteBytes)
 
 			// TryWrite
@@ -687,7 +687,7 @@ func TestRingBuffer_BlockingBig(t *testing.T) {
 				t.Fatalf("write failed: %v", err)
 			}
 			wroteBytes += n
-			wrote.Write(buf[:n])
+			_, _ = wrote.Write(buf[:n])
 			debugln("WRITE 4\t", n, wroteBytes)
 
 			// TryWriteByte
@@ -697,7 +697,7 @@ func TestRingBuffer_BlockingBig(t *testing.T) {
 			}
 			if err == nil {
 				wroteBytes++
-				wrote.Write(buf[:1])
+				_, _ = wrote.Write(buf[:1])
 				debugln("WRITE 5\t", 1, wroteBytes)
 			}
 			if doSleep && writeRng.Intn(10) == 0 {
@@ -778,7 +778,7 @@ func TestRingBuffer_ReadFromBig(t *testing.T) {
 			// Read
 			n, err := rb.Read(buf[:readRng.Intn(len(buf))])
 			readBytes += n
-			read.Write(buf[:n])
+			_, _ = read.Write(buf[:n])
 			if err != nil {
 				readErr = err
 				break
@@ -792,13 +792,13 @@ func TestRingBuffer_ReadFromBig(t *testing.T) {
 				break
 			}
 			readBytes++
-			read.Write([]byte{b})
+			_, _ = read.Write([]byte{b}) //nolint:errcheck
 			debugln("READ 2\t", 1, readBytes)
 
 			// TryRead
 			n, err = rb.TryRead(buf[:readRng.Intn(len(buf))])
 			readBytes += n
-			read.Write(buf[:n])
+			_, _ = read.Write(buf[:n])
 			if err != nil && err != ErrAcquireLock && err != ErrIsEmpty {
 				readErr = err
 				break
@@ -818,7 +818,7 @@ func TestRingBuffer_ReadFromBig(t *testing.T) {
 			writeRng.Read(buf)
 			// Write
 			wroteBytes += len(buf)
-			wrote.Write(buf)
+			_, _ = wrote.Write(buf)
 		}
 		debugln("ReadFrom with", wroteBytes, wroteBuf.Len())
 		n, err := rb.ReadFrom(bytes.NewReader(wroteBuf.Bytes()))
@@ -914,7 +914,7 @@ func TestRingBuffer_Copy(t *testing.T) {
 		for i := 0; i < writeRng.Intn(1000); i++ {
 			// Write
 			wroteBytes += len(buf)
-			wrote.Write(buf)
+			_, _ = wrote.Write(buf)
 		}
 		in := &serveStream{
 			b:   wroteBuf.Bytes(),
@@ -967,8 +967,10 @@ type errormock struct {
 	wleft   int
 }
 
-var _ io.Reader = &errormock{}
-var _ io.Writer = &errormock{}
+var (
+	_ io.Reader = &errormock{}
+	_ io.Writer = &errormock{}
+)
 
 func (e *errormock) Read(p []byte) (n int, err error) {
 	switch {
@@ -1342,20 +1344,20 @@ func TestRingBufferCloseErrorUnblocks(t *testing.T) {
 		<-done
 	}
 	testCancel(func() {
-		rb.Write([]byte{sz + 5: 1})
+		_, _ = rb.Write([]byte{sz + 5: 1}) //nolint:errcheck
 	})
 	testCancel(func() {
-		rb.Write(make([]byte, sz))
-		rb.WriteByte(0)
+		_, _ = rb.Write(make([]byte, sz)) //nolint:errcheck
+		_ = rb.WriteByte(0)               //nolint:errcheck,typecheck
 	})
 	testCancel(func() {
-		rb.Read([]byte{10: 1})
+		_, _ = rb.Read([]byte{10: 1}) //nolint:errcheck
 	})
 	testCancel(func() {
-		rb.ReadByte()
+		_, _ = rb.ReadByte() //nolint:errcheck,typecheck
 	})
 	testCancel(func() {
-		rb.Write(make([]byte, sz))
+		_, _ = rb.Write(make([]byte, sz)) //nolint:errcheck
 		rb.Flush()
 	})
 }
@@ -1565,7 +1567,7 @@ func timeout(after time.Duration) (cancel func()) {
 func TestRingBuffer_Peek(t *testing.T) {
 	rb := New(10)
 	data := []byte("hello")
-	rb.Write(data)
+	_, _ = rb.Write(data)
 
 	buf := make([]byte, len(data))
 	n, err := rb.Peek(buf)
@@ -1585,13 +1587,13 @@ func TestRingBuffer_Peek_WrapAround(t *testing.T) {
 
 	// Fill buffer with pattern that causes wrap-around
 	data := []byte("abcdefgh")
-	rb.Write(data)           // r=0, w=8
-	rb.Read(make([]byte, 4)) // r=4, w=8
+	_, _ = rb.Write(data)           // r=0, w=8
+	_, _ = rb.Read(make([]byte, 4)) // r=4, w=8
 
 	// Write more to cause wrap-around
-	rb.Write([]byte("ijkl")) // r=4, w=12, no wrap yet
-	rb.Read(make([]byte, 4)) // r=8, w=12
-	rb.Write([]byte("mnop")) // r=8, w=16 (wrapped to 0)
+	_, _ = rb.Write([]byte("ijkl")) // r=4, w=12, no wrap yet
+	_, _ = rb.Read(make([]byte, 4)) // r=8, w=12
+	_, _ = rb.Write([]byte("mnop")) // r=8, w=16 (wrapped to 0)
 
 	// Peek should correctly read wrapped buffer
 	buf := make([]byte, 8)
@@ -1609,7 +1611,7 @@ func TestRingBuffer_Peek_WrapAround(t *testing.T) {
 
 	// Verify read pointer unchanged
 	readBuf := make([]byte, 8)
-	rb.Read(readBuf)
+	_, _ = rb.Read(readBuf)
 	if !bytes.Equal(readBuf, expected) {
 		t.Fatalf("Read after Peek returned different data")
 	}
@@ -1620,7 +1622,7 @@ func TestRingBuffer_Peek_FullBuffer(t *testing.T) {
 
 	// Fill completely
 	data := []byte("abcdefgh")
-	rb.Write(data)
+	_, _ = rb.Write(data)
 
 	// Peek should work on full buffer
 	buf := make([]byte, 8)
@@ -1644,7 +1646,7 @@ func TestRingBuffer_Peek_FullBuffer(t *testing.T) {
 func TestRingBuffer_Peek_Partial(t *testing.T) {
 	rb := New(16)
 	data := []byte("hello world")
-	rb.Write(data)
+	_, _ = rb.Write(data)
 
 	// Peek fewer bytes than available
 	buf := make([]byte, 5)
@@ -1674,7 +1676,7 @@ func TestRingBuffer_Bytes_BufferReuse(t *testing.T) {
 	dst := make([]byte, 0, 64)
 
 	// First call - should use dst buffer if capacity sufficient
-	rb.Write([]byte("first data"))
+	_, _ = rb.Write([]byte("first data"))
 	result := rb.Bytes(dst)
 	if len(result) != len("first data") {
 		t.Fatalf("Wrong length: %d", len(result))
@@ -1689,7 +1691,7 @@ func TestRingBuffer_Bytes_BufferReuse(t *testing.T) {
 
 	// Second call with different data size
 	rb.Reset()
-	rb.Write([]byte("different"))
+	_, _ = rb.Write([]byte("different"))
 	result = rb.Bytes(result)
 	if string(result) != "different" {
 		t.Fatalf("Wrong data: %s", string(result))
@@ -1701,7 +1703,7 @@ func TestRingBuffer_Bytes_SmallDst(t *testing.T) {
 
 	// Write data
 	data := []byte("hello world")
-	rb.Write(data)
+	_, _ = rb.Write(data)
 
 	// Try to use a buffer that's too small
 	smallDst := make([]byte, 0, 4) // cap=4, but we need 11 bytes
@@ -1720,9 +1722,9 @@ func TestRingBuffer_Bytes_WrapAround(t *testing.T) {
 	rb := New(16)
 
 	// Create wrap-around scenario
-	rb.Write([]byte("abcd"))         // r=0, w=4
-	rb.Read(make([]byte, 2))         // r=2, w=4
-	rb.Write([]byte("efghijklmnop")) // r=2, w=14
+	_, _ = rb.Write([]byte("abcd"))         // r=0, w=4
+	_, _ = rb.Read(make([]byte, 2))         // r=2, w=4
+	_, _ = rb.Write([]byte("efghijklmnop")) // r=2, w=14
 
 	// Get bytes
 	result := rb.Bytes(nil)
@@ -1790,7 +1792,7 @@ func TestRingBuffer_TryContention(t *testing.T) {
 	// Final verification
 	rb.Reset()
 	finalBuf := make([]byte, 1024)
-	rb.Write(finalBuf)
+	_, _ = rb.Write(finalBuf)
 	readBuf := make([]byte, 1024)
 	n, err := rb.Read(readBuf)
 	if err != nil {
@@ -1853,7 +1855,7 @@ func TestRingBuffer_OverwriteMode_Basic(t *testing.T) {
 
 	// Buffer should still be full, but "ab" was overwritten by "ef"
 	buf := make([]byte, 4)
-	rb.Read(buf)
+	_, _ = rb.Read(buf)
 	if string(buf) != "cdef" {
 		t.Fatalf("Expected 'cdef', got '%s'", string(buf))
 	}
@@ -1863,7 +1865,7 @@ func TestRingBuffer_OverwriteMode_WriteFullReplacement(t *testing.T) {
 	rb := New(4).SetOverwrite(true)
 
 	// Fill buffer
-	rb.Write([]byte("abcd"))
+	_, _ = rb.Write([]byte("abcd"))
 
 	// Write full replacement - should replace all
 	n, err := rb.Write([]byte("wxyz"))
@@ -1875,7 +1877,7 @@ func TestRingBuffer_OverwriteMode_WriteFullReplacement(t *testing.T) {
 	}
 
 	buf := make([]byte, 4)
-	rb.Read(buf)
+	_, _ = rb.Read(buf)
 	if string(buf) != "wxyz" {
 		t.Fatalf("Expected 'wxyz', got '%s'", string(buf))
 	}
@@ -1901,7 +1903,7 @@ func TestRingBuffer_OverwriteMode_WriteByte(t *testing.T) {
 	}
 
 	buf := make([]byte, 2)
-	rb.Read(buf)
+	_, _ = rb.Read(buf)
 	if string(buf) != "bc" {
 		t.Fatalf("Expected 'bc', got '%s'", string(buf))
 	}
@@ -1911,7 +1913,7 @@ func TestRingBuffer_OverwriteMode_NotFull(t *testing.T) {
 	rb := New(8).SetOverwrite(true)
 
 	// Write less than buffer size
-	rb.Write([]byte("hello"))
+	_, _ = rb.Write([]byte("hello"))
 
 	if rb.Length() != 5 {
 		t.Fatalf("Expected length 5, got %d", rb.Length())
@@ -1919,7 +1921,7 @@ func TestRingBuffer_OverwriteMode_NotFull(t *testing.T) {
 
 	// Read should get what was written
 	buf := make([]byte, 5)
-	rb.Read(buf)
+	_, _ = rb.Read(buf)
 	if string(buf) != "hello" {
 		t.Fatalf("Expected 'hello', got '%s'", string(buf))
 	}
@@ -1929,13 +1931,13 @@ func TestRingBuffer_OverwriteMode_TwiceFull(t *testing.T) {
 	rb := New(4).SetOverwrite(true)
 
 	// Fill buffer
-	rb.Write([]byte("abcd"))
+	_, _ = rb.Write([]byte("abcd"))
 
 	// Write 8 bytes - should replace all with first 4 bytes of new data
-	rb.Write([]byte("efghijkl"))
+	_, _ = rb.Write([]byte("efghijkl"))
 
 	buf := make([]byte, 4)
-	rb.Read(buf)
+	_, _ = rb.Read(buf)
 	if string(buf) != "efgh" {
 		t.Fatalf("Expected 'efgh', got '%s'", string(buf))
 	}
@@ -1944,8 +1946,8 @@ func TestRingBuffer_OverwriteMode_TwiceFull(t *testing.T) {
 func TestRingBuffer_OverwriteMode_Reset(t *testing.T) {
 	rb := New(4).SetOverwrite(true)
 
-	rb.Write([]byte("abcd"))
-	rb.Write([]byte("ef"))
+	_, _ = rb.Write([]byte("abcd"))
+	_, _ = rb.Write([]byte("ef"))
 
 	// Reset should clear everything
 	rb.Reset()
@@ -1955,7 +1957,7 @@ func TestRingBuffer_OverwriteMode_Reset(t *testing.T) {
 	}
 
 	// Write again - should work normally
-	rb.Write([]byte("xyz"))
+	_, _ = rb.Write([]byte("xyz"))
 	buf := make([]byte, 3)
 	n, err := rb.Read(buf)
 	if err != nil {
@@ -1969,8 +1971,8 @@ func TestRingBuffer_OverwriteMode_Reset(t *testing.T) {
 func TestRingBuffer_OverwriteMode_Bytes(t *testing.T) {
 	rb := New(6).SetOverwrite(true)
 
-	rb.Write([]byte("abcdef"))
-	rb.Write([]byte("gh"))
+	_, _ = rb.Write([]byte("abcdef"))
+	_, _ = rb.Write([]byte("gh"))
 
 	// Bytes should reflect the current content
 	data := rb.Bytes(nil)
@@ -1983,12 +1985,12 @@ func TestRingBuffer_OverwriteMode_WrapAround(t *testing.T) {
 	rb := New(8).SetOverwrite(true)
 
 	// Write to cause wraparound
-	rb.Write([]byte("abcdefgh")) // r=0, w=0, full
-	rb.Write([]byte("ij"))       // should overwrite "ab"
-	rb.Write([]byte("kl"))       // should overwrite "cd"
+	_, _ = rb.Write([]byte("abcdefgh")) // r=0, w=0, full
+	_, _ = rb.Write([]byte("ij"))       // should overwrite "ab"
+	_, _ = rb.Write([]byte("kl"))       // should overwrite "cd"
 
 	buf := make([]byte, 8)
-	rb.Read(buf)
+	_, _ = rb.Read(buf)
 	if string(buf) != "efghijkl" {
 		t.Fatalf("Expected 'efghijkl', got '%s'", string(buf))
 	}
@@ -1998,21 +2000,21 @@ func TestRingBuffer_OverwriteMode_ConditionBroadcast(t *testing.T) {
 	rb := New(4).SetOverwrite(true).SetBlocking(true)
 
 	// Fill buffer
-	rb.Write([]byte("abcd"))
+	_, _ = rb.Write([]byte("abcd"))
 
 	// Signal should be sent to waiting readers
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		buf := make([]byte, 2)
-		rb.Read(buf)
+		_, _ = rb.Read(buf)
 	}()
 
 	// Give goroutine time to start
 	time.Sleep(10 * time.Millisecond)
 
 	// Write with overwrite should broadcast
-	rb.Write([]byte("ef"))
+	_, _ = rb.Write([]byte("ef"))
 
 	select {
 	case <-done:

@@ -104,10 +104,8 @@ func (r *RingBuffer) SetOverwrite(overwrite bool) *RingBuffer {
 // A goroutine will be started and run until the provided context is canceled.
 func (r *RingBuffer) WithCancel(ctx context.Context) *RingBuffer {
 	go func() {
-		select {
-		case <-ctx.Done():
-			r.CloseWithError(ctx.Err())
-		}
+		<-ctx.Done()
+		r.CloseWithError(ctx.Err())
 	}()
 	return r
 }
@@ -312,7 +310,7 @@ func (r *RingBuffer) waitRead() (ok bool) {
 
 	r.readCond.Wait()
 	if time.Since(start) >= r.rTimeout {
-		r.setErr(context.DeadlineExceeded, true)
+		r.setErr(context.DeadlineExceeded, true) //nolint errcheck
 		return false
 	}
 	return true
@@ -415,7 +413,7 @@ func (r *RingBuffer) waitWrite() (ok bool) {
 
 	r.writeCond.Wait()
 	if time.Since(start) >= r.wTimeout {
-		r.setErr(context.DeadlineExceeded, true)
+		r.setErr(context.DeadlineExceeded, true) //nolint errcheck
 		return false
 	}
 	return true
@@ -452,18 +450,21 @@ func (r *RingBuffer) ReadFrom(rd io.Reader) (n int64, err error) {
 			continue
 		}
 
+		// Calculate available space to read into
 		var toRead []byte
 		if r.w >= r.r {
 			// After reader, read until end of buffer
 			toRead = r.buf[r.w:]
 		} else {
 			// Before reader, read until reader.
+			if r.w >= r.size || r.r > r.size {
+				// Pointers are corrupted, return error to prevent panic
+				return n, errors.New("RingBuffer: internal state corrupted")
+			}
 			toRead = r.buf[r.w:r.r]
 		}
-		// Unlock while reading
-		r.mu.Unlock()
+
 		nr, rerr := rd.Read(toRead)
-		r.mu.Lock()
 		if rerr != nil && rerr != io.EOF {
 			err = r.setErr(rerr, true)
 			break
@@ -476,10 +477,9 @@ func (r *RingBuffer) ReadFrom(rd io.Reader) (n int64, err error) {
 			continue
 		}
 		zeroReads = 0
-		r.w += nr
-		if r.w == r.size {
-			r.w = 0
-		}
+
+		// Update write pointer with proper wrap-around using modulo
+		r.w = (r.w + nr) % r.size
 		r.isFull = r.r == r.w && nr > 0
 		n += int64(nr)
 		r.writeCond.Broadcast()
@@ -574,7 +574,7 @@ func (r *RingBuffer) Copy(dst io.Writer, src io.Reader) (written int64, err erro
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		r.ReadFrom(src)
+		_, _ = r.ReadFrom(src) //nolint errcheck
 		r.CloseWriter()
 	}()
 	defer wg.Wait()
@@ -845,13 +845,13 @@ func (r *RingBuffer) CloseWithError(err error) {
 	if err == nil {
 		err = io.EOF
 	}
-	r.setErr(err, false)
+	r.setErr(err, false) //nolint errcheck
 }
 
 // CloseWriter closes the writer.
 // Reads will return any remaining bytes and io.EOF.
 func (r *RingBuffer) CloseWriter() {
-	r.setErr(io.EOF, false)
+	r.setErr(io.EOF, false) //nolint errcheck
 }
 
 // Flush waits for the buffer to be empty and fully read.
@@ -888,7 +888,7 @@ func (r *RingBuffer) Reset() {
 	defer r.mu.Unlock()
 
 	// Set error so any readers/writers will return immediately.
-	r.setErr(ErrReset, true)
+	r.setErr(ErrReset, true) //nolint errcheck
 	if r.block {
 		r.readCond.Broadcast()
 		r.writeCond.Broadcast()

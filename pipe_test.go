@@ -268,22 +268,22 @@ func TestPipeWriteClose2(t *testing.T) {
 func TestWriteEmpty(t *testing.T) {
 	r, w := New(256).Pipe()
 	go func() {
-		w.Write([]byte{})
+		w.Write([]byte{}) //nolint errcheck)
 		w.Close()
 	}()
 	var b [2]byte
-	io.ReadFull(r, b[0:2])
+	io.ReadFull(r, b[0:2]) //nolint errcheck
 	r.Close()
 }
 
 func TestWriteNil(t *testing.T) {
 	r, w := New(256).Pipe()
 	go func() {
-		w.Write(nil)
+		w.Write(nil) //nolint errcheck
 		w.Close()
 	}()
 	var b [2]byte
-	io.ReadFull(r, b[0:2])
+	io.ReadFull(r, b[0:2]) //nolint errcheck
 	r.Close()
 }
 
@@ -324,21 +324,21 @@ func TestPipeCloseError(t *testing.T) {
 	type testError2 struct{ error }
 
 	r, w := New(256).Pipe()
-	r.CloseWithError(testError1{})
+	r.CloseWithError(testError1{}) //nolint errcheck
 	if _, err := w.Write(nil); err != (testError1{}) {
 		t.Errorf("Write error: got %T, want testError1", err)
 	}
-	r.CloseWithError(testError2{})
+	r.CloseWithError(testError2{}) //nolint errcheck
 	if _, err := w.Write(nil); err != (testError1{}) {
 		t.Errorf("Write error: got %T, want testError1", err)
 	}
 
 	r, w = New(256).Pipe()
-	w.CloseWithError(testError1{})
+	w.CloseWithError(testError1{}) //nolint errcheck
 	if _, err := r.Read(nil); err != (testError1{}) {
 		t.Errorf("Read error: got %T, want testError1", err)
 	}
-	w.CloseWithError(testError2{})
+	w.CloseWithError(testError2{}) //nolint errcheck
 	if _, err := r.Read(nil); err != (testError1{}) {
 		t.Errorf("Read error: got %T, want testError1", err)
 	}

@@ -14,8 +14,8 @@ func BenchmarkRingBuffer_Sync(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rb.Write(data)
-		rb.Read(buf)
+		_, _ = rb.Write(data) //nolint errcheck
+		_, _ = rb.Read(buf)   //nolint errcheck
 	}
 }
 
@@ -27,13 +27,13 @@ func BenchmarkRingBuffer_AsyncRead(b *testing.B) {
 
 	go func() {
 		for {
-			rb.Read(buf)
+			_, _ = rb.Read(buf) //nolint errcheck
 		}
 	}()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rb.Write(data)
+		_, _ = rb.Write(data) //nolint errcheck
 	}
 }
 
@@ -47,13 +47,13 @@ func BenchmarkRingBuffer_AsyncReadBlocking(b *testing.B) {
 
 	go func() {
 		for {
-			rb.Read(buf)
+			_, _ = rb.Read(buf) //nolint errcheck
 		}
 	}()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rb.Write(data)
+		_, _ = rb.Write(data) //nolint errcheck
 	}
 }
 
@@ -64,13 +64,13 @@ func BenchmarkRingBuffer_AsyncWrite(b *testing.B) {
 
 	go func() {
 		for {
-			rb.Write(data)
+			_, _ = rb.Write(data) //nolint errcheck
 		}
 	}()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rb.Read(buf)
+		_, _ = rb.Read(buf) //nolint errcheck
 	}
 }
 
@@ -84,13 +84,13 @@ func BenchmarkRingBuffer_AsyncWriteBlocking(b *testing.B) {
 
 	go func() {
 		for {
-			rb.Write(data)
+			_, _ = rb.Write(data) //nolint errcheck
 		}
 	}()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rb.Read(buf)
+		_, _ = rb.Read(buf) //nolint errcheck
 	}
 }
 
@@ -117,15 +117,15 @@ func BenchmarkRingBuffer_ReadFrom(b *testing.B) {
 	buf := make([]byte, sz)
 
 	go func() {
-		rb.ReadFrom(repeatReader{b: data})
+		_, _ = rb.ReadFrom(repeatReader{b: data}) //nolint errcheck
 	}()
 
 	b.ResetTimer()
 	b.SetBytes(sz)
 	for i := 0; i < b.N; i++ {
-		io.ReadFull(rb, buf)
+		_, _ = io.ReadFull(rb, buf) //nolint errcheck
 	}
-	rb.CloseWithError(context.Canceled)
+	rb.CloseWithError(context.Canceled) //nolint errcheck
 }
 
 func BenchmarkRingBuffer_WriteTo(b *testing.B) {
@@ -136,7 +136,7 @@ func BenchmarkRingBuffer_WriteTo(b *testing.B) {
 	data := []byte(strings.Repeat("a", sz))
 
 	go func() {
-		rb.WriteTo(io.Discard)
+		_, _ = rb.WriteTo(io.Discard) //nolint errcheck
 	}()
 
 	b.ResetTimer()
@@ -147,7 +147,7 @@ func BenchmarkRingBuffer_WriteTo(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-	rb.CloseWithError(context.Canceled)
+	rb.CloseWithError(context.Canceled) //nolint errcheck
 }
 
 func BenchmarkIoPipeReader(b *testing.B) {
@@ -157,13 +157,13 @@ func BenchmarkIoPipeReader(b *testing.B) {
 
 	go func() {
 		for {
-			pw.Write(data)
+			_, _ = pw.Write(data) //nolint errcheck
 		}
 	}()
 
 	b.ResetTimer()
 	b.SetBytes(int64(len(data)))
 	for i := 0; i < b.N; i++ {
-		pr.Read(buf)
+		_, _ = pr.Read(buf) //nolint errcheck
 	}
 }

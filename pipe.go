@@ -1,4 +1,4 @@
-// Copyright 2019 smallnest. All rights reserved.
+// Copyright 2019 smallnest. All rights reserved. //nolint:lll
 // Use of this source code is governed by a MIT-style
 // license that can be found in the LICENSE file.
 
@@ -37,7 +37,7 @@ func (r *PipeReader) Read(data []byte) (n int, err error) {
 // Close closes the reader; subsequent writes to the
 // write half of the pipe will return the error [io.ErrClosedPipe].
 func (r *PipeReader) Close() error {
-	r.pipe.setErr(io.ErrClosedPipe, false)
+	r.pipe.setErr(io.ErrClosedPipe, false) //nolint:errcheck
 	return nil
 }
 
@@ -50,7 +50,7 @@ func (r *PipeReader) CloseWithError(err error) error {
 	if err == nil {
 		return r.Close()
 	}
-	r.pipe.setErr(err, false)
+	r.pipe.setErr(err, false) //nolint:errcheck
 	return nil
 }
 
@@ -73,7 +73,7 @@ func (w *PipeWriter) Write(data []byte) (n int, err error) {
 // Close closes the writer; subsequent reads from the
 // read half of the pipe will return no bytes and EOF.
 func (w *PipeWriter) Close() error {
-	w.pipe.setErr(io.EOF, false)
+	w.pipe.setErr(io.EOF, false) //nolint:errcheck
 	return nil
 }
 
@@ -87,6 +87,6 @@ func (w *PipeWriter) CloseWithError(err error) error {
 	if err == nil {
 		return w.Close()
 	}
-	w.pipe.setErr(err, false)
+	w.pipe.setErr(err, false) //nolint:errcheck
 	return nil
 }

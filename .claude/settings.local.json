@@ -10,7 +10,11 @@
       "Bash(make fmt-check:*)",
       "Bash(make info:*)",
       "Bash(make fmt:*)",
-      "Bash(make test:*)"
+      "Bash(make test:*)",
+      "Bash(cat:*)",
+      "Bash(xxd:*)",
+      "Bash(make lint:*)",
+      "Bash(golangci-lint:*)"
     ]
   }
 }
