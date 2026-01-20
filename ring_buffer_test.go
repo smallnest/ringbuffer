@@ -1585,13 +1585,13 @@ func TestRingBuffer_Peek_WrapAround(t *testing.T) {
 
 	// Fill buffer with pattern that causes wrap-around
 	data := []byte("abcdefgh")
-	rb.Write(data)       // r=0, w=8
+	rb.Write(data)           // r=0, w=8
 	rb.Read(make([]byte, 4)) // r=4, w=8
 
 	// Write more to cause wrap-around
-	rb.Write([]byte("ijkl"))   // r=4, w=12, no wrap yet
-	rb.Read(make([]byte, 4))  // r=8, w=12
-	rb.Write([]byte("mnop"))    // r=8, w=16 (wrapped to 0)
+	rb.Write([]byte("ijkl")) // r=4, w=12, no wrap yet
+	rb.Read(make([]byte, 4)) // r=8, w=12
+	rb.Write([]byte("mnop")) // r=8, w=16 (wrapped to 0)
 
 	// Peek should correctly read wrapped buffer
 	buf := make([]byte, 8)
@@ -1720,9 +1720,9 @@ func TestRingBuffer_Bytes_WrapAround(t *testing.T) {
 	rb := New(16)
 
 	// Create wrap-around scenario
-	rb.Write([]byte("abcd"))  // r=0, w=4
-	rb.Read(make([]byte, 2))  // r=2, w=4
-	rb.Write([]byte("efghijklmnop"))  // r=2, w=14
+	rb.Write([]byte("abcd"))         // r=0, w=4
+	rb.Read(make([]byte, 2))         // r=2, w=4
+	rb.Write([]byte("efghijklmnop")) // r=2, w=14
 
 	// Get bytes
 	result := rb.Bytes(nil)
@@ -1824,5 +1824,200 @@ func TestRingBuffer_TryLockSuccess(t *testing.T) {
 	}
 	if string(buf) != "test" {
 		t.Fatalf("Wrong data: %s", string(buf))
+	}
+}
+
+func TestRingBuffer_OverwriteMode_Basic(t *testing.T) {
+	rb := New(4).SetOverwrite(true)
+
+	// Fill buffer
+	n, err := rb.Write([]byte("abcd"))
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if n != 4 {
+		t.Fatalf("Expected 4 bytes, got %d", n)
+	}
+	if rb.Length() != 4 {
+		t.Fatalf("Expected length 4, got %d", rb.Length())
+	}
+
+	// Write more bytes - should overwrite oldest
+	n, err = rb.Write([]byte("ef"))
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("Expected 2 bytes, got %d", n)
+	}
+
+	// Buffer should still be full, but "ab" was overwritten by "ef"
+	buf := make([]byte, 4)
+	rb.Read(buf)
+	if string(buf) != "cdef" {
+		t.Fatalf("Expected 'cdef', got '%s'", string(buf))
+	}
+}
+
+func TestRingBuffer_OverwriteMode_WriteFullReplacement(t *testing.T) {
+	rb := New(4).SetOverwrite(true)
+
+	// Fill buffer
+	rb.Write([]byte("abcd"))
+
+	// Write full replacement - should replace all
+	n, err := rb.Write([]byte("wxyz"))
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if n != 4 {
+		t.Fatalf("Expected 4 bytes, got %d", n)
+	}
+
+	buf := make([]byte, 4)
+	rb.Read(buf)
+	if string(buf) != "wxyz" {
+		t.Fatalf("Expected 'wxyz', got '%s'", string(buf))
+	}
+}
+
+func TestRingBuffer_OverwriteMode_WriteByte(t *testing.T) {
+	rb := New(2).SetOverwrite(true)
+
+	// Fill buffer
+	err := rb.WriteByte('a')
+	if err != nil {
+		t.Fatalf("WriteByte failed: %v", err)
+	}
+	err = rb.WriteByte('b')
+	if err != nil {
+		t.Fatalf("WriteByte failed: %v", err)
+	}
+
+	// Write another byte - should overwrite oldest
+	err = rb.WriteByte('c')
+	if err != nil {
+		t.Fatalf("WriteByte failed: %v", err)
+	}
+
+	buf := make([]byte, 2)
+	rb.Read(buf)
+	if string(buf) != "bc" {
+		t.Fatalf("Expected 'bc', got '%s'", string(buf))
+	}
+}
+
+func TestRingBuffer_OverwriteMode_NotFull(t *testing.T) {
+	rb := New(8).SetOverwrite(true)
+
+	// Write less than buffer size
+	rb.Write([]byte("hello"))
+
+	if rb.Length() != 5 {
+		t.Fatalf("Expected length 5, got %d", rb.Length())
+	}
+
+	// Read should get what was written
+	buf := make([]byte, 5)
+	rb.Read(buf)
+	if string(buf) != "hello" {
+		t.Fatalf("Expected 'hello', got '%s'", string(buf))
+	}
+}
+
+func TestRingBuffer_OverwriteMode_TwiceFull(t *testing.T) {
+	rb := New(4).SetOverwrite(true)
+
+	// Fill buffer
+	rb.Write([]byte("abcd"))
+
+	// Write 8 bytes - should replace all with first 4 bytes of new data
+	rb.Write([]byte("efghijkl"))
+
+	buf := make([]byte, 4)
+	rb.Read(buf)
+	if string(buf) != "efgh" {
+		t.Fatalf("Expected 'efgh', got '%s'", string(buf))
+	}
+}
+
+func TestRingBuffer_OverwriteMode_Reset(t *testing.T) {
+	rb := New(4).SetOverwrite(true)
+
+	rb.Write([]byte("abcd"))
+	rb.Write([]byte("ef"))
+
+	// Reset should clear everything
+	rb.Reset()
+
+	if rb.Length() != 0 {
+		t.Fatalf("Expected empty buffer after Reset, got length %d", rb.Length())
+	}
+
+	// Write again - should work normally
+	rb.Write([]byte("xyz"))
+	buf := make([]byte, 3)
+	n, err := rb.Read(buf)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+	if n != 3 || string(buf[:n]) != "xyz" {
+		t.Fatalf("Expected 'xyz', got '%s'", string(buf[:n]))
+	}
+}
+
+func TestRingBuffer_OverwriteMode_Bytes(t *testing.T) {
+	rb := New(6).SetOverwrite(true)
+
+	rb.Write([]byte("abcdef"))
+	rb.Write([]byte("gh"))
+
+	// Bytes should reflect the current content
+	data := rb.Bytes(nil)
+	if string(data) != "cdefgh" {
+		t.Fatalf("Expected 'cdefgh', got '%s'", string(data))
+	}
+}
+
+func TestRingBuffer_OverwriteMode_WrapAround(t *testing.T) {
+	rb := New(8).SetOverwrite(true)
+
+	// Write to cause wraparound
+	rb.Write([]byte("abcdefgh")) // r=0, w=0, full
+	rb.Write([]byte("ij"))       // should overwrite "ab"
+	rb.Write([]byte("kl"))       // should overwrite "cd"
+
+	buf := make([]byte, 8)
+	rb.Read(buf)
+	if string(buf) != "efghijkl" {
+		t.Fatalf("Expected 'efghijkl', got '%s'", string(buf))
+	}
+}
+
+func TestRingBuffer_OverwriteMode_ConditionBroadcast(t *testing.T) {
+	rb := New(4).SetOverwrite(true).SetBlocking(true)
+
+	// Fill buffer
+	rb.Write([]byte("abcd"))
+
+	// Signal should be sent to waiting readers
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 2)
+		rb.Read(buf)
+	}()
+
+	// Give goroutine time to start
+	time.Sleep(10 * time.Millisecond)
+
+	// Write with overwrite should broadcast
+	rb.Write([]byte("ef"))
+
+	select {
+	case <-done:
+		// Good
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Reader should have been notified")
 	}
 }

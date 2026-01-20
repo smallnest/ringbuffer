@@ -51,6 +51,7 @@ type RingBuffer struct {
 	isFull    bool
 	err       error
 	block     bool
+	overwrite bool          // when true, overwrite old data when buffer is full
 	rTimeout  time.Duration // Applies to writes (waits for the read condition)
 	wTimeout  time.Duration // Applies to read (wait for the write condition)
 	mu        sync.Mutex
@@ -86,6 +87,15 @@ func (r *RingBuffer) SetBlocking(block bool) *RingBuffer {
 		r.readCond = sync.NewCond(&r.mu)
 		r.writeCond = sync.NewCond(&r.mu)
 	}
+	return r
+}
+
+// SetOverwrite sets the overwrite mode of the ring buffer.
+// If overwrite is true, Write operations will overwrite the oldest data when the buffer is full,
+// similar to a traditional circular buffer. The read pointer will advance to skip overwritten data.
+// If overwrite is false (default), Write will return ErrIsFull or block (if blocking mode is enabled).
+func (r *RingBuffer) SetOverwrite(overwrite bool) *RingBuffer {
+	r.overwrite = overwrite
 	return r
 }
 
@@ -594,6 +604,16 @@ func (r *RingBuffer) TryWrite(p []byte) (n int, err error) {
 }
 
 func (r *RingBuffer) write(p []byte) (n int, err error) {
+	// In overwrite mode, we always allow writing by discarding old data
+	if r.overwrite && r.isFull && len(p) > 0 {
+		// Write will overwrite old data
+		// First, advance read pointer to make room
+		needed := len(p)
+		// Discard 'needed' bytes by advancing read pointer
+		r.r = (r.r + needed) % r.size
+		r.isFull = false
+	}
+
 	if r.isFull {
 		return 0, ErrIsFull
 	}
@@ -681,7 +701,15 @@ func (r *RingBuffer) writeByte(c byte) error {
 		return r.err
 	}
 	if r.w == r.r && r.isFull {
-		return ErrIsFull
+		// In overwrite mode, discard the oldest byte and write the new one
+		if r.overwrite {
+			r.r++
+			if r.r == r.size {
+				r.r = 0
+			}
+		} else {
+			return ErrIsFull
+		}
 	}
 	r.buf[r.w] = c
 	r.w++

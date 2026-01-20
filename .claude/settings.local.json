@@ -3,7 +3,14 @@
     "allow": [
       "Bash(go test:*)",
       "Bash(go clean:*)",
-      "Bash(go run:*)"
+      "Bash(go run:*)",
+      "Bash(curl:*)",
+      "Bash(make help:*)",
+      "Bash(make build:*)",
+      "Bash(make fmt-check:*)",
+      "Bash(make info:*)",
+      "Bash(make fmt:*)",
+      "Bash(make test:*)"
     ]
   }
 }
