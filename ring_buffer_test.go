@@ -2023,3 +2023,173 @@ func TestRingBuffer_OverwriteMode_ConditionBroadcast(t *testing.T) {
 		t.Fatal("Reader should have been notified")
 	}
 }
+
+// TestRingBuffer_ResetInBlockingMode tests that Reset() in blocking mode
+// is transparent to blocked readers - they continue waiting as if nothing happened.
+// This is the expected pipe-like behavior for issue #22 (Plan B).
+func TestRingBuffer_ResetInBlockingMode(t *testing.T) {
+	rb := New(64).SetBlocking(true)
+
+	// Start a blocked reader
+	done := make(chan result)
+	go func() {
+		buf := make([]byte, 10)
+		n, err := rb.Read(buf)
+		done <- result{n: n, data: string(buf[:n]), err: err}
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	// Reset the buffer - the reader should continue waiting
+	rb.Reset()
+
+	// Wait a bit to ensure reader is still waiting (not returned)
+	select {
+	case <-done:
+		t.Fatal("Reader should still be waiting after Reset()")
+	case <-time.After(20 * time.Millisecond):
+		// Good, reader is still waiting
+	}
+
+	// Now write data - the blocked reader should get it
+	_, _ = rb.Write([]byte("hello"))
+
+	res := <-done
+	if res.err != nil {
+		t.Fatalf("Read failed: %v", res.err)
+	}
+	if res.n != 5 || res.data != "hello" {
+		t.Fatalf("Expected 'hello' (n=5), got n=%d data='%s'", res.n, res.data)
+	}
+}
+
+// TestRingBuffer_ResetInBlockingMode_Write tests that Reset() in blocking mode
+// works correctly for blocked writers - Reset clears the buffer, allowing the write to complete.
+func TestRingBuffer_ResetInBlockingMode_Write(t *testing.T) {
+	rb := New(4).SetBlocking(true)
+
+	// Fill the buffer first
+	_, _ = rb.Write([]byte("abcd"))
+
+	// Start a blocked writer
+	done := make(chan result)
+	go func() {
+		n, err := rb.Write([]byte("efgh"))
+		done <- result{n: n, err: err}
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	// Verify writer is blocked
+	select {
+	case <-done:
+		t.Fatal("Writer should be blocked before Reset()")
+	case <-time.After(10 * time.Millisecond):
+		// Good, writer is blocked
+	}
+
+	// Reset the buffer - this clears it, allowing the writer to complete
+	rb.Reset()
+
+	// Writer should complete successfully after Reset
+	res := <-done
+	if res.err != nil {
+		t.Fatalf("Write failed: %v", res.err)
+	}
+	if res.n != 4 {
+		t.Fatalf("Expected to write 4 bytes, got n=%d", res.n)
+	}
+
+	// Verify the data was written correctly (after reset, buffer contains "efgh")
+	buf := make([]byte, 4)
+	n, err := rb.Read(buf)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+	if n != 4 || string(buf) != "efgh" {
+		t.Fatalf("Expected 'efgh', got '%s'", string(buf))
+	}
+}
+
+// TestRingBuffer_ResetInBlockingMode_Multiple tests multiple Resets with waiters.
+func TestRingBuffer_ResetInBlockingMode_Multiple(t *testing.T) {
+	rb := New(64).SetBlocking(true)
+
+	// Start multiple blocked readers
+	done := make(chan result, 3)
+	for i := 0; i < 3; i++ {
+		go func() {
+			buf := make([]byte, 10)
+			n, err := rb.Read(buf)
+			done <- result{n: n, data: string(buf[:n]), err: err}
+		}()
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	// Multiple resets - readers should continue waiting
+	rb.Reset()
+	time.Sleep(5 * time.Millisecond)
+	rb.Reset()
+	time.Sleep(5 * time.Millisecond)
+
+	// Verify readers are still waiting
+	if len(done) != 0 {
+		t.Fatal("Readers should still be waiting after multiple Reset()")
+	}
+
+	// Write data - only one reader should get it
+	_, _ = rb.Write([]byte("test1"))
+
+	select {
+	case res := <-done:
+		if res.err != nil {
+			t.Fatalf("Read failed: %v", res.err)
+		}
+		if res.data != "test1" {
+			t.Fatalf("Expected 'test1', got '%s'", res.data)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Timeout waiting for read")
+	}
+
+	// Write more data for remaining readers
+	_, _ = rb.Write([]byte("test2"))
+	<-done
+}
+
+// TestRingBuffer_ResetInNonBlockingMode tests that Reset() in non-blocking mode
+// still works correctly (returns ErrReset if error state was set).
+func TestRingBuffer_ResetInNonBlockingMode(t *testing.T) {
+	rb := New(64)
+
+	// Set an error state first
+	rb.CloseWithError(ErrReset)
+
+	// Reset should clear the error
+	rb.Reset()
+
+	if rb.Length() != 0 {
+		t.Fatalf("Expected empty buffer after Reset, got length %d", rb.Length())
+	}
+
+	// Should be able to use the buffer normally after reset
+	_, err := rb.Write([]byte("test"))
+	if err != nil {
+		t.Fatalf("Write after reset failed: %v", err)
+	}
+
+	buf := make([]byte, 4)
+	n, err := rb.Read(buf)
+	if err != nil {
+		t.Fatalf("Read after reset failed: %v", err)
+	}
+	if n != 4 || string(buf[:n]) != "test" {
+		t.Fatalf("Expected 'test', got '%s'", string(buf[:n]))
+	}
+}
+
+// result is used to pass multiple values from a goroutine
+type result struct {
+	n    int
+	data string
+	err  error
+}

@@ -44,20 +44,21 @@ var (
 // and can be read back from another goroutine.
 // It is safe to concurrently read and write RingBuffer.
 type RingBuffer struct {
-	buf       []byte
-	size      int
-	r         int // next position to read
-	w         int // next position to write
-	isFull    bool
-	err       error
-	block     bool
-	overwrite bool          // when true, overwrite old data when buffer is full
-	rTimeout  time.Duration // Applies to writes (waits for the read condition)
-	wTimeout  time.Duration // Applies to read (wait for the write condition)
-	mu        sync.Mutex
-	wg        sync.WaitGroup
-	readCond  *sync.Cond // Signaled when data has been read.
-	writeCond *sync.Cond // Signaled when data has been written.
+	buf        []byte
+	size       int
+	r          int // next position to read
+	w          int // next position to write
+	isFull     bool
+	err        error
+	block      bool
+	overwrite  bool          // when true, overwrite old data when buffer is full
+	rTimeout   time.Duration // Applies to writes (waits for the read condition)
+	wTimeout   time.Duration // Applies to read (wait for the write condition)
+	mu         sync.Mutex
+	wg         sync.WaitGroup
+	readCond   *sync.Cond // Signaled when data has been read.
+	writeCond  *sync.Cond // Signaled when data has been written.
+	generation int64      // Incremented on Reset() to invalidate current waiters
 }
 
 // New returns a new RingBuffer whose buffer has the given size.
@@ -212,8 +213,16 @@ func (r *RingBuffer) Read(p []byte) (n int, err error) {
 	defer r.wg.Done()
 	n, err = r.read(p)
 	for err == ErrIsEmpty && r.block {
+		// Record the generation before waiting. If Reset() increments the generation,
+		// we will detect it after waking up and continue waiting (as if nothing happened).
+		myGen := r.generation
 		if !r.waitWrite() {
 			return 0, context.DeadlineExceeded
+		}
+		// If generation changed, Reset() happened while we were waiting.
+		// Go back to waiting - the buffer was reset and we should continue as normal.
+		if myGen != r.generation {
+			continue
 		}
 		if err = r.readErr(true); err != nil {
 			break
@@ -325,8 +334,16 @@ func (r *RingBuffer) ReadByte() (b byte, err error) {
 	}
 	for r.w == r.r && !r.isFull {
 		if r.block {
+			// Record the generation before waiting. If Reset() increments the generation,
+			// we will detect it after waking up and continue waiting.
+			myGen := r.generation
 			if !r.waitWrite() {
 				return 0, context.DeadlineExceeded
+			}
+			// If generation changed, Reset() happened while we were waiting.
+			// Go back to waiting - the buffer was reset.
+			if myGen != r.generation {
+				continue
 			}
 			err = r.readErr(true)
 			if err != nil {
@@ -383,8 +400,18 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 		}
 		err = r.setErr(err, true)
 		if r.block && (err == ErrIsFull || err == ErrTooMuchDataToWrite) {
+			// Record the generation before waiting. If Reset() increments the generation,
+			// we will detect it after waking up and continue waiting.
+			myGen := r.generation
 			r.writeCond.Broadcast()
 			r.waitRead()
+			// If generation changed, Reset() happened while we were waiting.
+			// Go back to waiting - the buffer was reset.
+			if myGen != r.generation {
+				p = p[n:]
+				err = nil
+				continue
+			}
 			p = p[n:]
 			err = nil
 			continue
@@ -666,8 +693,17 @@ func (r *RingBuffer) WriteByte(c byte) error {
 	}
 	err := r.writeByte(c)
 	for err == ErrIsFull && r.block {
+		// Record the generation before waiting. If Reset() increments the generation,
+		// we will detect it after waking up and continue waiting.
+		myGen := r.generation
 		if !r.waitRead() {
 			return context.DeadlineExceeded
+		}
+		// If generation changed, Reset() happened while we were waiting.
+		// Go back to waiting - the buffer was reset.
+		if myGen != r.generation {
+			err = r.writeByte(c)
+			continue
 		}
 		err = r.setErr(r.writeByte(c), true)
 	}
@@ -887,12 +923,25 @@ func (r *RingBuffer) Reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Set error so any readers/writers will return immediately.
-	r.setErr(ErrReset, true) //nolint errcheck
 	if r.block {
+		// In blocking mode, increment generation to invalidate current waiters.
+		// They will wake up, see the generation changed, and go back to waiting.
+		// This makes Reset() transparent to waiters - they continue waiting as if nothing happened.
+		//
+		// Note: We don't wait for wg.Wait() in blocking mode since waiters may
+		// block indefinitely. The generation mechanism ensures they handle the reset correctly.
+		r.generation++
 		r.readCond.Broadcast()
 		r.writeCond.Broadcast()
+		r.r = 0
+		r.w = 0
+		r.err = nil
+		r.isFull = false
+		return
 	}
+
+	// In non-blocking mode, set error to return immediately to any readers/writers.
+	r.setErr(ErrReset, true) //nolint errcheck
 
 	// Unlock the mutex so readers/writers can finish.
 	r.mu.Unlock()
