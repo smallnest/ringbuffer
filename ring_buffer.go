@@ -632,13 +632,25 @@ func (r *RingBuffer) TryWrite(p []byte) (n int, err error) {
 
 func (r *RingBuffer) write(p []byte) (n int, err error) {
 	// In overwrite mode, we always allow writing by discarding old data
-	if r.overwrite && r.isFull && len(p) > 0 {
-		// Write will overwrite old data
-		// First, advance read pointer to make room
-		needed := len(p)
-		// Discard 'needed' bytes by advancing read pointer
-		r.r = (r.r + needed) % r.size
-		r.isFull = false
+	if r.overwrite && len(p) > 0 {
+		var avail int
+		if r.w == r.r && r.isFull {
+			// Buffer is full, no space available
+			avail = 0
+		} else if r.w >= r.r {
+			avail = r.size - r.w + r.r
+		} else {
+			avail = r.r - r.w
+		}
+
+		// If we need more space than available, discard old data
+		if len(p) > avail {
+			// Advance read pointer to make room
+			needed := len(p) - avail
+			r.r = (r.r + needed) % r.size
+			// If buffer was full, it's no longer full after advancing read pointer
+			r.isFull = false
+		}
 	}
 
 	if r.isFull {
