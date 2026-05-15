@@ -137,7 +137,7 @@ install-tools:
 ## docs: Generate documentation
 docs:
 	@echo "$(COLOR_BLUE)Generating documentation...$(COLOR_RESET)"
-	@echo "Open http://localhost:6060/pkg/github.com/smallnest/ringbuffer/ in your browser"
+	@echo "Open http://localhost:6060/pkg/github.com/argcv/ringbuffer/ in your browser"
 	godoc -http=:6060
 
 ## example: Run example
@@ -168,6 +168,6 @@ version:
 info:
 	@printf "$(COLOR_BOLD)Project Information$(COLOR_RESET)\n"
 	@printf "  Name: RingBuffer\n"
-	@printf "  Module: github.com/smallnest/ringbuffer\n"
+	@printf "  Module: github.com/argcv/ringbuffer\n"
 	@printf "  Go Version: $$($(GOCMD) version | cut -d' ' -f3)\n"
 	@printf "  Files: $$($(GOCMD) list ./... | wc -l | tr -d ' ')\n"

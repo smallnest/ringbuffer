@@ -16,14 +16,20 @@ import "io"
 // Only if the ring buffer is empty will the read block.
 //
 // It is safe (and intended) to call Read and Write in parallel with each other or with Close.
-func (r *RingBuffer) Pipe() (*PipeReader, *PipeWriter) {
+func Pipe(size int) (*PipeReader, *PipeWriter) {
+	return PipeFrom(NewRing[byte](size))
+}
+
+// PipeFrom creates a pipe from an existing Ring[byte].
+// The buffer will be switched to blocking mode.
+func PipeFrom(r *Ring[byte]) (*PipeReader, *PipeWriter) {
 	r.SetBlocking(true)
 	pr := PipeReader{pipe: r}
 	return &pr, &PipeWriter{pipe: r}
 }
 
 // A PipeReader is the read half of a pipe.
-type PipeReader struct{ pipe *RingBuffer }
+type PipeReader struct{ pipe *Ring[byte] }
 
 // Read implements the standard Read interface:
 // it reads data from the pipe, blocking until a writer
@@ -55,13 +61,13 @@ func (r *PipeReader) CloseWithError(err error) error {
 }
 
 // A PipeWriter is the write half of a pipe.
-type PipeWriter struct{ pipe *RingBuffer }
+type PipeWriter struct{ pipe *Ring[byte] }
 
 // Write implements the standard Write interface:
 // it writes data to the pipe.
 // The Write will block until all data has been written to the ring buffer.
 // If the read end is closed with an error, that err is
-// returned as err; otherwise err is [io.ErrClosedPipe].
+// returned as err; otherwise it is [io.ErrClosedPipe].
 func (w *PipeWriter) Write(data []byte) (n int, err error) {
 	if n, err = w.pipe.Write(data); err == ErrWriteOnClosed {
 		// Replace error.
