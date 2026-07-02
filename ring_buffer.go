@@ -54,6 +54,7 @@ type RingBuffer struct {
 	overwrite  bool          // when true, overwrite old data when buffer is full
 	rTimeout   time.Duration // Applies to writes (waits for the read condition)
 	wTimeout   time.Duration // Applies to read (wait for the write condition)
+	noClOnTo   bool          // do not set buffer in error on a timeout
 	mu         sync.Mutex
 	wg         sync.WaitGroup
 	readCond   *sync.Cond // Signaled when data has been read.
@@ -147,6 +148,18 @@ func (r *RingBuffer) WithWriteTimeout(d time.Duration) *RingBuffer {
 	// Write operations wait for reads to complete,
 	// therefore we set the rTimeout.
 	r.rTimeout = d
+	r.mu.Unlock()
+	return r
+}
+
+// WithNoCloseOnTimeout will set the ringbuffer to not close on timeout.
+// By default, the ringbuffer will close on timeout and return context.DeadlineExceeded.
+// When this option is set, the ringbuffer will not close on timeout (but still return
+// context.DeadlineExceeded) and will continue to operate.
+// This is useful when you want to handle timeouts without closing the ringbuffer.
+func (r *RingBuffer) WithNoCloseOnTimeout() *RingBuffer {
+	r.mu.Lock()
+	r.noClOnTo = true
 	r.mu.Unlock()
 	return r
 }
@@ -319,7 +332,9 @@ func (r *RingBuffer) waitRead() (ok bool) {
 
 	r.readCond.Wait()
 	if time.Since(start) >= r.rTimeout {
-		r.setErr(context.DeadlineExceeded, true) //nolint errcheck
+		if !r.noClOnTo {
+			r.setErr(context.DeadlineExceeded, true) //nolint errcheck
+		}
 		return false
 	}
 	return true
@@ -440,7 +455,9 @@ func (r *RingBuffer) waitWrite() (ok bool) {
 
 	r.writeCond.Wait()
 	if time.Since(start) >= r.wTimeout {
-		r.setErr(context.DeadlineExceeded, true) //nolint errcheck
+		if !r.noClOnTo {
+			r.setErr(context.DeadlineExceeded, true) //nolint errcheck
+		}
 		return false
 	}
 	return true
