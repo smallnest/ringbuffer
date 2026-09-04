@@ -1,3 +1,3 @@
-module github.com/smallnest/ringbuffer
+module github.com/Arrayscape/ringbuffer
 
 go 1.19
