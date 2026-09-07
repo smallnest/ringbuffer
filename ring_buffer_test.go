@@ -2193,3 +2193,33 @@ type result struct {
 	data string
 	err  error
 }
+
+func TestRingBuffer_OverwriteMode_WriteLargerThanCapacity(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		prefill string
+		write   string
+		want    string
+	}{
+		{"empty", "", "abcdef", "abcd"},
+		{"empty_odd", "", "abcde", "abcd"},
+		{"partial", "ab", "cdefgh", "cdef"},
+		{"full", "abcd", "efghij", "efgh"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rb := New(4).SetOverwrite(true)
+			if tt.prefill != "" {
+				if _, err := rb.Write([]byte(tt.prefill)); err != nil {
+					t.Fatalf("prefill: %v", err)
+				}
+			}
+			n, err := rb.Write([]byte(tt.write))
+			if got := string(rb.Bytes(nil)); got != tt.want {
+				t.Errorf("Bytes = %q, want %q (n=%d err=%v)", got, tt.want, n, err)
+			}
+			if rb.Length() != 4 {
+				t.Errorf("Length = %d, want 4", rb.Length())
+			}
+		})
+	}
+}
