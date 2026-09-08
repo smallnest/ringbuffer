@@ -664,6 +664,10 @@ func (r *RingBuffer) write(p []byte) (n int, err error) {
 		if len(p) > avail {
 			// Advance read pointer to make room
 			needed := len(p) - avail
+			// Never discard more than the buffer actually holds.
+			if used := r.size - avail; needed > used {
+				needed = used
+			}
 			r.r = (r.r + needed) % r.size
 			// If buffer was full, it's no longer full after advancing read pointer
 			r.isFull = false
