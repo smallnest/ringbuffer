@@ -430,7 +430,7 @@ func TestRingBuffer_Blocking(t *testing.T) {
 		read = io.MultiWriter(read, &readBuf)
 		wrote = io.MultiWriter(wrote, &wroteBuf)
 	}
-	debugln := func(args ...interface{}) {
+	debugln := func(args ...any) {
 		if debug {
 			fmt.Println(args...)
 		}
@@ -593,7 +593,7 @@ func TestRingBuffer_BlockingBig(t *testing.T) {
 		read = io.MultiWriter(read, &readBuf)
 		wrote = io.MultiWriter(wrote, &wroteBuf)
 	}
-	debugln := func(args ...interface{}) {
+	debugln := func(args ...any) {
 		if debug {
 			fmt.Println(args...)
 		}
@@ -755,7 +755,7 @@ func TestRingBuffer_ReadFromBig(t *testing.T) {
 	wrote := io.Writer(wroteHash)
 	read = io.MultiWriter(read, &readBuf)
 	wrote = io.MultiWriter(wrote, &wroteBuf)
-	debugln := func(args ...interface{}) {
+	debugln := func(args ...any) {
 		if debug {
 			fmt.Println(args...)
 		}

@@ -56,6 +56,7 @@ type RingBuffer struct {
 	wTimeout   time.Duration // Applies to read (wait for the write condition)
 	noClOnTo   bool          // do not set buffer in error on a timeout
 	mu         sync.Mutex
+	writeMu    sync.Mutex // serializes the write side so ReadFrom can release mu while blocked in rd.Read
 	wg         sync.WaitGroup
 	readCond   *sync.Cond // Signaled when data has been read.
 	writeCond  *sync.Cond // Signaled when data has been written.
@@ -401,6 +402,8 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 	if len(p) == 0 {
 		return 0, r.setErr(nil, false)
 	}
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.checkWriteErr(); err != nil {
@@ -475,42 +478,75 @@ func (r *RingBuffer) waitWrite() (ok bool) {
 // Any error except EOF encountered during the read is also returned,
 // and the error will cause the Read side to fail as well.
 // ReadFrom only available in blocking mode.
+//
+// While a ReadFrom is in progress the read pointer is released between reads, so
+// Read, Peek, Length, Free and IsEmpty stay responsive even when the source is
+// idle and blocked in Read. Concurrent Write/WriteByte calls are serialized
+// against ReadFrom and wait while a single read into the buffer is in flight.
 func (r *RingBuffer) ReadFrom(rd io.Reader) (n int64, err error) {
 	if !r.block {
 		return 0, errors.New("RingBuffer: ReadFrom only available in blocking mode")
 	}
+	// ReadFrom is the write side for its whole duration. Serialize against other
+	// writers so we can release r.mu while blocked in rd.Read without a
+	// concurrent Write scribbling into the window we reserved or moving r.w out
+	// from under our snapshot. The read/inspection side never takes writeMu, so
+	// it is unaffected.
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+
 	zeroReads := 0
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	for {
+		r.mu.Lock()
 		if err = r.readErr(true); err != nil {
+			r.mu.Unlock()
 			return n, err
 		}
 		if r.isFull {
-			// Wait for a read
+			// Wait for a read.
 			if !r.waitRead() {
+				r.mu.Unlock()
 				return 0, context.DeadlineExceeded
 			}
+			r.mu.Unlock()
 			continue
 		}
 
-		// Calculate available space to read into
+		// Reserve the contiguous free window and snapshot what we will commit
+		// against. The window is free space beyond the write pointer, disjoint
+		// from the committed [r, w) region that readers and Peek/Length touch.
 		var toRead []byte
 		if r.w >= r.r {
-			// After reader, read until end of buffer
+			// After reader, read until end of buffer.
 			toRead = r.buf[r.w:]
 		} else {
 			// Before reader, read until reader.
 			if r.w >= r.size || r.r > r.size {
-				// Pointers are corrupted, return error to prevent panic
+				// Pointers are corrupted, return error to prevent panic.
+				r.mu.Unlock()
 				return n, errors.New("RingBuffer: internal state corrupted")
 			}
 			toRead = r.buf[r.w:r.r]
 		}
+		startW := r.w
+		gen := r.generation
+		r.mu.Unlock()
 
+		// Read with no lock held: this is where an idle source blocks, and where
+		// every other method must stay responsive.
 		nr, rerr := rd.Read(toRead)
+
+		r.mu.Lock()
+		if r.generation != gen {
+			// Reset() happened while we were blocked in rd.Read. The snapshot is
+			// stale and any bytes read belong to a buffer that no longer exists;
+			// drop them and recompute against the fresh state.
+			r.mu.Unlock()
+			continue
+		}
 		if rerr != nil && rerr != io.EOF {
 			err = r.setErr(rerr, true)
+			r.mu.Unlock()
 			break
 		}
 		if nr == 0 && rerr == nil {
@@ -518,16 +554,19 @@ func (r *RingBuffer) ReadFrom(rd io.Reader) (n int64, err error) {
 			if zeroReads >= 100 {
 				err = r.setErr(io.ErrNoProgress, true)
 			}
+			r.mu.Unlock()
 			continue
 		}
 		zeroReads = 0
 
-		// Update write pointer with proper wrap-around using modulo
-		r.w = (r.w + nr) % r.size
+		// Commit. writeMu keeps us the only writer, so startW == r.w still holds.
+		r.w = (startW + nr) % r.size
 		r.isFull = r.r == r.w && nr > 0
 		n += int64(nr)
 		r.writeCond.Broadcast()
-		if rerr == io.EOF {
+		eof := rerr == io.EOF
+		r.mu.Unlock()
+		if eof {
 			// We do not close.
 			break
 		}
@@ -615,12 +654,10 @@ func (r *RingBuffer) WriteTo(w io.Writer) (n int64, err error) {
 func (r *RingBuffer) Copy(dst io.Writer, src io.Reader) (written int64, err error) {
 	r.SetBlocking(true)
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, _ = r.ReadFrom(src) //nolint errcheck
 		r.CloseWriter()
-	}()
+	})
 	defer wg.Wait()
 	return r.WriteTo(dst)
 }
@@ -631,6 +668,10 @@ func (r *RingBuffer) TryWrite(p []byte) (n int, err error) {
 	if len(p) == 0 {
 		return 0, r.setErr(nil, false)
 	}
+	if !r.writeMu.TryLock() {
+		return 0, ErrAcquireLock
+	}
+	defer r.writeMu.Unlock()
 	ok := r.mu.TryLock()
 	if !ok {
 		return 0, ErrAcquireLock
@@ -715,6 +756,8 @@ func (r *RingBuffer) write(p []byte) (n int, err error) {
 
 // WriteByte writes one byte into buffer, and returns ErrIsFull if the buffer is full.
 func (r *RingBuffer) WriteByte(c byte) error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.checkWriteErr(); err != nil {
@@ -745,6 +788,10 @@ func (r *RingBuffer) WriteByte(c byte) error {
 // TryWriteByte writes one byte into buffer without blocking.
 // If it does not succeed to acquire the lock, it returns ErrAcquireLock.
 func (r *RingBuffer) TryWriteByte(c byte) error {
+	if !r.writeMu.TryLock() {
+		return ErrAcquireLock
+	}
+	defer r.writeMu.Unlock()
 	ok := r.mu.TryLock()
 	if !ok {
 		return ErrAcquireLock
