@@ -18,7 +18,7 @@ func TestIssue23(t *testing.T) {
 			v = []byte("0123456789") // 10 bytes
 		}
 		if fill {
-			for i := 0; i < b.Capacity(); i++ {
+			for range b.Capacity() {
 				if writeErr := b.WriteByte(' '); writeErr != nil {
 					err = writeErr
 					return
@@ -32,7 +32,7 @@ func TestIssue23(t *testing.T) {
 		}
 
 		var n int
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			n, err = b.Write(v)
 			full = b.IsFull()
 			if err != nil {
@@ -116,7 +116,7 @@ func TestOverwriteVariousSizes(t *testing.T) {
 				data[i] = byte(i % 256)
 			}
 
-			for i := 0; i < tc.numWrites; i++ {
+			for i := range tc.numWrites {
 				n, err := b.Write(data)
 				if err != nil {
 					t.Errorf("Write failed at iteration %d: capacity=%d, writeSize=%d, err=%v",

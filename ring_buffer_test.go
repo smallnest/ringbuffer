@@ -443,10 +443,8 @@ func TestRingBuffer_Blocking(t *testing.T) {
 	// Reader
 	var readErr error
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
+	wg.Go(func() {
 		readRng := rand.New(rand.NewSource(1))
-		defer wg.Done()
 		defer rb.CloseWithError(readErr)
 		buf := make([]byte, 1024)
 		for {
@@ -483,13 +481,13 @@ func TestRingBuffer_Blocking(t *testing.T) {
 				time.Sleep(time.Duration(readRng.Intn(maxSleep)))
 			}
 		}
-	}()
+	})
 
 	// Writer
 	{
 		buf := make([]byte, 1024)
 		writeRng := rand.New(rand.NewSource(2))
-		for i := 0; i < 2500; i++ {
+		for range 2500 {
 			writeRng.Read(buf)
 			// Write
 			n, err := rb.Write(buf[:writeRng.Intn(len(buf))])
@@ -606,9 +604,7 @@ func TestRingBuffer_BlockingBig(t *testing.T) {
 	// Reader
 	var readErr error
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		defer rb.CloseWithError(readErr)
 		readRng := rand.New(rand.NewSource(1))
 		buf := make([]byte, 64<<10)
@@ -646,13 +642,13 @@ func TestRingBuffer_BlockingBig(t *testing.T) {
 				time.Sleep(time.Duration(readRng.Intn(maxSleep)))
 			}
 		}
-	}()
+	})
 
 	// Writer
 	{
 		writeRng := rand.New(rand.NewSource(2))
 		buf := make([]byte, 64<<10)
-		for i := 0; i < 500; i++ {
+		for range 500 {
 			writeRng.Read(buf)
 			// Write
 			n, err := rb.Write(buf[:writeRng.Intn(len(buf))])
@@ -768,9 +764,7 @@ func TestRingBuffer_ReadFromBig(t *testing.T) {
 	// Reader
 	var readErr error
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		defer rb.CloseWithError(readErr)
 		readRng := rand.New(rand.NewSource(1))
 		buf := make([]byte, 64<<10)
@@ -808,13 +802,13 @@ func TestRingBuffer_ReadFromBig(t *testing.T) {
 				time.Sleep(time.Duration(readRng.Intn(maxSleep)))
 			}
 		}
-	}()
+	})
 
 	// Writer
 	{
 		writeRng := rand.New(rand.NewSource(2))
 		buf := make([]byte, 100<<10)
-		for i := 0; i < 500; i++ {
+		for range 500 {
 			writeRng.Read(buf)
 			// Write
 			wroteBytes += len(buf)
@@ -1743,12 +1737,10 @@ func TestRingBuffer_TryContention(t *testing.T) {
 	errors := make(chan error, numGoroutines*2)
 
 	// Reader goroutines
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range numGoroutines {
+		wg.Go(func() {
 			buf := make([]byte, 16)
-			for j := 0; j < opsPerGoroutine; j++ {
+			for range opsPerGoroutine {
 				n, err := rb.TryRead(buf)
 				if err != nil && err != ErrAcquireLock && err != ErrIsEmpty {
 					errors <- fmt.Errorf("TryRead error: %w", err)
@@ -1759,16 +1751,14 @@ func TestRingBuffer_TryContention(t *testing.T) {
 					_ = buf[:n]
 				}
 			}
-		}()
+		})
 	}
 
 	// Writer goroutines
-	for i := 0; i < numGoroutines; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range numGoroutines {
+		wg.Go(func() {
 			data := []byte("test data content")
-			for j := 0; j < opsPerGoroutine; j++ {
+			for range opsPerGoroutine {
 				n, err := rb.TryWrite(data)
 				if err != nil && err != ErrAcquireLock && err != ErrIsFull && err != ErrTooMuchDataToWrite {
 					errors <- fmt.Errorf("TryWrite error: %w", err)
@@ -1779,7 +1769,7 @@ func TestRingBuffer_TryContention(t *testing.T) {
 					_ = n
 				}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -2115,7 +2105,7 @@ func TestRingBuffer_ResetInBlockingMode_Multiple(t *testing.T) {
 
 	// Start multiple blocked readers
 	done := make(chan result, 3)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		go func() {
 			buf := make([]byte, 10)
 			n, err := rb.Read(buf)
