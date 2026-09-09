@@ -844,19 +844,7 @@ func (r *RingBuffer) writeByte(c byte) error {
 func (r *RingBuffer) Length() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	if r.w == r.r {
-		if r.isFull {
-			return r.size
-		}
-		return 0
-	}
-
-	if r.w > r.r {
-		return r.w - r.r
-	}
-
-	return r.size - r.r + r.w
+	return r.length()
 }
 
 // Capacity returns the size of the underlying buffer.
@@ -1090,4 +1078,74 @@ func (r *RingBuffer) peek(p []byte) (n int, err error) {
 		return 0, ErrIsEmpty
 	}
 	return n, r.readErr(true)
+}
+
+// PeekAt reads up to len(p) bytes into p, starting off bytes past the read
+// pointer, without moving it.
+//
+// The offset is for a consumer that has to run ahead of what it can release.
+// Where bytes stay buffered until something confirms them, the read pointer is
+// wherever confirmation has reached — not where reading should resume — and the
+// two can be far apart. Peek always starts at the read pointer, so such a
+// consumer would otherwise have to ask for everything from there and discard
+// the part it already has, copying the skipped prefix on every call.
+//
+// An offset at or past the end of the buffered data returns 0 and no error: it
+// means the consumer has taken everything there is, which is an ordinary thing
+// for it to ask. That is distinct from an empty buffer, which returns
+// ErrIsEmpty exactly as Peek does.
+func (r *RingBuffer) PeekAt(off int, p []byte) (n int, err error) {
+	if len(p) == 0 || off < 0 {
+		return 0, r.readErr(false)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.readErr(true); err != nil {
+		return 0, err
+	}
+
+	held := r.length()
+	if held == 0 {
+		// Nothing buffered at all, which is what Peek reports here too.
+		return 0, ErrIsEmpty
+	}
+	if off >= held {
+		// Buffered, but the consumer has already taken all of it. Not the same
+		// condition as an empty buffer, and not an error: it is what a consumer
+		// that has caught up sees every time it asks.
+		return 0, nil
+	}
+
+	n = held - off
+	if n > len(p) {
+		n = len(p)
+	}
+
+	start := r.r + off
+	if start >= r.size {
+		start -= r.size
+	}
+	if start+n <= r.size {
+		copy(p, r.buf[start:start+n])
+	} else {
+		c1 := r.size - start
+		copy(p, r.buf[start:r.size])
+		copy(p[c1:], r.buf[0:n-c1])
+	}
+	return n, r.readErr(true)
+}
+
+// length is Length without the lock, for callers that already hold it.
+func (r *RingBuffer) length() int {
+	if r.w == r.r {
+		if r.isFull {
+			return r.size
+		}
+		return 0
+	}
+	if r.w > r.r {
+		return r.w - r.r
+	}
+	return r.size - r.r + r.w
 }
