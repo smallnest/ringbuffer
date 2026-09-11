@@ -1088,6 +1088,13 @@ func (rc *readCloser) Close() error {
 // spuriously, so treat it as a hint to look, not as a promise of data.
 //
 // Signals are delivered regardless of blocking mode.
+//
+// Notify is not a broadcast: a send wakes exactly one receiver, so it is meant
+// for a single waiting consumer. If several goroutines select on the same
+// channel, one signal wakes only one of them and the others may keep waiting.
+//
+// Because a signal is spent by the receive, a wakeup must not be discarded
+// without looking. Re-inspect the buffer before waiting again.
 func (r *RingBuffer) Notify() <-chan struct{} {
 	return r.notify
 }

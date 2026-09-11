@@ -61,6 +61,33 @@ In blocking mode errors are stateful and the same error will be returned until `
 
 It is possible to set a deadline for blocking Read/Write operations using `rb.WithDeadline(time.Duration)`.
 
+# Waiting without blocking: Notify
+
+A consumer that must wait on several things at once — new data, a shutdown
+signal, a deadline — cannot block in `Read`. Neither can a consumer that wants
+to look at buffered data without taking it, since `Peek` is non-blocking by
+design. `Notify` gives those consumers a channel to wait on:
+
+```go
+for {
+	select {
+	case <-rb.Notify():
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	// A wakeup means "look", not "there is data".
+	n, err := rb.Peek(scratch)
+	// inspect scratch[:n] and consume only what is confirmed
+}
+```
+
+The channel is signalled when data is written, and when the buffer is closed or
+reset. It has capacity 1 and signals coalesce, so a wakeup reports only that
+something changed — never how much or how often — and spurious signals are
+permitted. `Notify` is not a broadcast: one signal wakes one waiter, so use a
+single waiting consumer per buffer.
+
 # io.Copy replacement
 
 The ring buffer can replace `io.Copy` and `io.CopyBuffer` to do async copying through the ring buffer.

@@ -67,7 +67,7 @@ func TestNotifyCoalesces(t *testing.T) {
 // will never be any, or it parks forever on a closed buffer.
 func TestNotifyOnClose(t *testing.T) {
 	rb := New(64).SetBlocking(true)
-	drain(t, rb)
+	closeOnCleanup(t, rb)
 
 	go func() {
 		time.Sleep(20 * time.Millisecond)
@@ -82,7 +82,7 @@ func TestNotifyOnClose(t *testing.T) {
 // TestNotifyOnCloseWithError — same, for the failure path.
 func TestNotifyOnCloseWithError(t *testing.T) {
 	rb := New(64).SetBlocking(true)
-	drain(t, rb)
+	closeOnCleanup(t, rb)
 
 	go func() {
 		time.Sleep(20 * time.Millisecond)
@@ -109,6 +109,24 @@ func TestNotifyDoesNotConsume(t *testing.T) {
 	if err != nil || string(p[:n]) != "payload" {
 		t.Errorf("Peek after Notify = %q err=%v, want %q", p[:n], err, "payload")
 	}
+}
+
+// TestNotifyOnReadFrom — ReadFrom bypasses the write funnels and signals at its
+// own commit point, so it needs its own coverage.
+func TestNotifyOnReadFrom(t *testing.T) {
+	rb := New(64).SetBlocking(true)
+	pr, pw := io.Pipe()
+	go func() { _, _ = rb.ReadFrom(pr) }()
+	time.Sleep(50 * time.Millisecond) // let ReadFrom park in rd.Read
+	go func() { _, _ = pw.Write([]byte("hi")) }()
+
+	if !waitNotify(rb, 2*time.Second) {
+		t.Fatal("no signal after ReadFrom committed")
+	}
+	if got := rb.Length(); got != 2 {
+		t.Fatalf("Length after ReadFrom = %d, want 2", got)
+	}
+	_ = pw.Close()
 }
 
 // TestPeekOnlyNeverSeesEOF documents a trap for consumers that only peek.
@@ -196,8 +214,9 @@ func TestNotifyDrivesPeekConsumeLoop(t *testing.T) {
 	}
 }
 
-// drain keeps a blocking buffer from wedging a test when nothing reads it.
-func drain(t *testing.T, rb *RingBuffer) {
+// closeOnCleanup closes a blocking buffer at the end of a test so a reader that
+// is never satisfied cannot wedge it.
+func closeOnCleanup(t *testing.T, rb *RingBuffer) {
 	t.Helper()
 	t.Cleanup(func() { rb.CloseWithError(io.ErrClosedPipe) })
 }
