@@ -58,24 +58,27 @@ type RingBuffer struct {
 	mu         sync.Mutex
 	writeMu    sync.Mutex // serializes the write side so ReadFrom can release mu while blocked in rd.Read
 	wg         sync.WaitGroup
-	readCond   *sync.Cond // Signaled when data has been read.
-	writeCond  *sync.Cond // Signaled when data has been written.
-	generation int64      // Incremented on Reset() to invalidate current waiters
+	readCond   *sync.Cond    // Signaled when data has been read.
+	writeCond  *sync.Cond    // Signaled when data has been written.
+	notify     chan struct{} // Signaled when data is written or state changes; see Notify.
+	generation int64         // Incremented on Reset() to invalidate current waiters
 }
 
 // New returns a new RingBuffer whose buffer has the given size.
 func New(size int) *RingBuffer {
 	return &RingBuffer{
-		buf:  make([]byte, size),
-		size: size,
+		buf:    make([]byte, size),
+		size:   size,
+		notify: make(chan struct{}, 1),
 	}
 }
 
 // NewBuffer returns a new RingBuffer whose buffer is provided.
 func NewBuffer(b []byte) *RingBuffer {
 	return &RingBuffer{
-		buf:  b,
-		size: len(b),
+		buf:    b,
+		size:   len(b),
+		notify: make(chan struct{}, 1),
 	}
 }
 
@@ -180,10 +183,15 @@ func (r *RingBuffer) setErr(err error, locked bool) error {
 		return err
 	default:
 		r.err = err
+		// The conds only exist in blocking mode (see SetBlocking), so this guard
+		// is nil-safety rather than policy. notify is allocated by both
+		// constructors and must fire in either mode: a consumer selecting on
+		// Notify still has to learn that the buffer closed.
 		if r.block {
 			r.readCond.Broadcast()
 			r.writeCond.Broadcast()
 		}
+		r.signalNotify()
 	}
 	return err
 }
@@ -564,6 +572,7 @@ func (r *RingBuffer) ReadFrom(rd io.Reader) (n int64, err error) {
 		r.isFull = r.r == r.w && nr > 0
 		n += int64(nr)
 		r.writeCond.Broadcast()
+		r.signalNotify()
 		eof := rerr == io.EOF
 		r.mu.Unlock()
 		if eof {
@@ -755,6 +764,10 @@ func (r *RingBuffer) write(p []byte) (n int, err error) {
 		r.isFull = true
 	}
 
+	if n > 0 {
+		r.signalNotify()
+	}
+
 	return n, err
 }
 
@@ -836,6 +849,8 @@ func (r *RingBuffer) writeByte(c byte) error {
 	if r.w == r.r {
 		r.isFull = true
 	}
+
+	r.signalNotify()
 
 	return nil
 }
@@ -1001,6 +1016,7 @@ func (r *RingBuffer) Reset() {
 		r.generation++
 		r.readCond.Broadcast()
 		r.writeCond.Broadcast()
+		r.signalNotify()
 		r.r = 0
 		r.w = 0
 		r.err = nil
@@ -1055,6 +1071,49 @@ func (rc *readCloser) Close() error {
 		err = nil
 	}
 	return err
+}
+
+// Notify returns a channel that is signaled whenever data is written to the
+// buffer, or when the buffer is closed or reset.
+//
+// It exists for consumers that cannot simply block in Read. A consumer that must
+// wait on several things at once — new data, plus events from elsewhere — needs
+// every source of wakeup to be selectable, and a blocking read is not. Peek is
+// also non-blocking by design, so a consumer that wants to look at data without
+// consuming it has nothing to wait on. This channel is that wait.
+//
+// The channel has capacity 1 and signals coalesce: it reports that something
+// changed, never how much or how often. A woken consumer must re-inspect the
+// buffer rather than assume anything about its state. A signal may also arrive
+// spuriously, so treat it as a hint to look, not as a promise of data.
+//
+// Signals are delivered regardless of blocking mode.
+func (r *RingBuffer) Notify() <-chan struct{} {
+	return r.notify
+}
+
+// signalNotify performs a non-blocking send on the notify channel. Safe to call
+// with r.mu held: the send never blocks, since a pending signal already conveys
+// everything a later one would.
+//
+// Placement differs from writeCond.Broadcast on purpose. Broadcasts live in the
+// exported entry points; notify is signalled from the internal write() and
+// writeByte() funnels instead, for two reasons:
+//
+//   - Coverage. writeByte has four callers and only two of them broadcast; the
+//     rest are covered transitively, which takes tracing to confirm. Signalling
+//     at the funnel means a new caller cannot be missed.
+//   - Blocking mode. Most broadcasts sit inside `if r.block` guards, because the
+//     conds are nil otherwise. Mirroring that placement would silence Notify for
+//     a non-blocking buffer, which consumers are entitled to use.
+//
+// Extra signals cost nothing: the channel has capacity 1 and coalesces, and the
+// documented contract is that a wakeup means "look", not "there is data".
+func (r *RingBuffer) signalNotify() {
+	select {
+	case r.notify <- struct{}{}:
+	default:
+	}
 }
 
 // Peek reads up to len(p) bytes into p without moving the read pointer.
