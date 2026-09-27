@@ -973,6 +973,7 @@ func (e *errormock) Read(p []byte) (n int, err error) {
 
 	case len(p) > e.rleft:
 		n = e.rleft
+		err = e.rerr
 
 	default:
 		n = len(p)
@@ -1028,6 +1029,22 @@ func TestRingBuffer_ReadFrom_Error(t *testing.T) {
 				t.Errorf("expect %d bytes copied but got %d", c, copied)
 			}
 		})
+	}
+}
+
+func TestRingBuffer_ReadFrom_ErrorKeepsData(t *testing.T) {
+	rb := New(16).SetBlocking(true)
+	tester := &errormock{rerr: io.ErrUnexpectedEOF, rleft: 5}
+
+	copied, err := rb.ReadFrom(tester)
+	if err != io.ErrUnexpectedEOF {
+		t.Errorf("expect io.ErrUnexpectedEOF but got %v", err)
+	}
+	if copied != 5 {
+		t.Errorf("expect 5 bytes copied but got %d", copied)
+	}
+	if got := rb.Length(); got != 5 {
+		t.Errorf("expect 5 bytes buffered but got %d", got)
 	}
 }
 

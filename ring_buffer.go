@@ -553,6 +553,12 @@ func (r *RingBuffer) ReadFrom(rd io.Reader) (n int64, err error) {
 			continue
 		}
 		if rerr != nil && rerr != io.EOF {
+			// Keep the bytes that came with the error.
+			if nr > 0 {
+				r.w = (startW + nr) % r.size
+				r.isFull = r.r == r.w
+				n += int64(nr)
+			}
 			err = r.setErr(rerr, true)
 			r.mu.Unlock()
 			break
