@@ -640,6 +640,7 @@ func (r *RingBuffer) WriteTo(w io.Writer) (n int64, err error) {
 			break
 		}
 		if nr != len(toWrite) {
+			n += int64(nr)
 			err = r.setErr(io.ErrShortWrite, true)
 			break
 		}

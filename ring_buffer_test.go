@@ -1076,6 +1076,17 @@ func TestRingBuffer_WriteTo_Error(t *testing.T) {
 	}
 }
 
+func TestRingBuffer_WriteToShortWriteCount(t *testing.T) {
+	rb := New(8).SetBlocking(true)
+	if _, err := rb.WriteString("abcdef"); err != nil {
+		t.Fatal(err)
+	}
+	w := &errormock{wleft: 3}
+	if n, err := rb.WriteTo(w); n != 3 || err != io.ErrShortWrite {
+		t.Fatalf("got %d, %v; want 3, io.ErrShortWrite", n, err)
+	}
+}
+
 func TestRingBuffer_Copy_ReadError(t *testing.T) {
 	const bufsize = 4 << 10
 
