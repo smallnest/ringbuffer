@@ -514,7 +514,7 @@ func (r *RingBuffer) ReadFrom(rd io.Reader) (n int64, err error) {
 			// Wait for a read.
 			if !r.waitRead() {
 				r.mu.Unlock()
-				return 0, context.DeadlineExceeded
+				return n, context.DeadlineExceeded
 			}
 			r.mu.Unlock()
 			continue
@@ -614,7 +614,7 @@ func (r *RingBuffer) WriteTo(w io.Writer) (n int64, err error) {
 		if r.r == r.w && !r.isFull {
 			// Wait for a write to make space
 			if !r.waitWrite() {
-				return 0, context.DeadlineExceeded
+				return n, context.DeadlineExceeded
 			}
 			continue
 		}

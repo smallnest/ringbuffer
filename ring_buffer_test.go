@@ -1048,6 +1048,33 @@ func TestRingBuffer_ReadFrom_ErrorKeepsData(t *testing.T) {
 	}
 }
 
+func TestRingBuffer_TransferTimeoutCount(t *testing.T) {
+	t.Run("ReadFrom", func(t *testing.T) {
+		rb := New(4).SetBlocking(true).WithTimeout(10 * time.Millisecond)
+		n, err := rb.ReadFrom(strings.NewReader("abcdefgh"))
+		if n != 4 || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("got %d, %v; want 4, context.DeadlineExceeded", n, err)
+		}
+		if got := string(rb.Bytes(nil)); got != "abcd" {
+			t.Fatalf("buffered %q; want abcd", got)
+		}
+	})
+	t.Run("WriteTo", func(t *testing.T) {
+		rb := New(4).SetBlocking(true).WithTimeout(10 * time.Millisecond)
+		if _, err := rb.WriteString("abcd"); err != nil {
+			t.Fatal(err)
+		}
+		var dst bytes.Buffer
+		n, err := rb.WriteTo(&dst)
+		if n != 4 || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("got %d, %v; want 4, context.DeadlineExceeded", n, err)
+		}
+		if got := dst.String(); got != "abcd" {
+			t.Fatalf("wrote %q; want abcd", got)
+		}
+	})
+}
+
 func TestRingBuffer_WriteTo_Error(t *testing.T) {
 	const bufsize = 4 << 10
 
