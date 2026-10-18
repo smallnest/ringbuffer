@@ -430,7 +430,9 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 			// we will detect it after waking up and continue waiting.
 			myGen := r.generation
 			r.writeCond.Broadcast()
-			r.waitRead()
+			if !r.waitRead() {
+				return wrote, context.DeadlineExceeded
+			}
 			// If generation changed, Reset() happened while we were waiting.
 			// Go back to waiting - the buffer was reset.
 			if myGen != r.generation {
