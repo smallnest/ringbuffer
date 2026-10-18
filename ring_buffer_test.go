@@ -25,6 +25,31 @@ func TestRingBuffer_interface(t *testing.T) {
 	var _ io.ByteWriter = rb
 }
 
+func TestRingBuffer_ReadByteUnblocksWriter(t *testing.T) {
+	rb := New(1).SetBlocking(true).WithTimeout(time.Second)
+	defer rb.CloseWithError(io.ErrClosedPipe)
+	done := make(chan error, 1)
+	go func() {
+		_, err := rb.WriteString("ab")
+		done <- err
+	}()
+
+	if b, err := rb.ReadByte(); b != 'a' || err != nil {
+		t.Fatalf("first byte: got %q, %v; want a, nil", b, err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("writer did not resume after ReadByte: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("writer did not resume after ReadByte")
+	}
+	if b, err := rb.ReadByte(); b != 'b' || err != nil {
+		t.Fatalf("second byte: got %q, %v; want b, nil", b, err)
+	}
+}
+
 func TestRingBuffer_Write(t *testing.T) {
 	rb := New(64)
 
