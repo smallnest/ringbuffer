@@ -50,6 +50,31 @@ func TestRingBuffer_ReadByteUnblocksWriter(t *testing.T) {
 	}
 }
 
+func TestRingBuffer_WriteTimeoutWithoutClosing(t *testing.T) {
+	rb := New(1).SetBlocking(true).WithTimeout(10 * time.Millisecond).WithNoCloseOnTimeout()
+	defer rb.CloseWithError(io.ErrClosedPipe)
+	done := make(chan error, 1)
+	go func() {
+		n, err := rb.WriteString("ab")
+		if n != 1 {
+			done <- fmt.Errorf("wrote %d bytes; want 1", n)
+			return
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != context.DeadlineExceeded {
+			t.Fatalf("got %v; want context.DeadlineExceeded", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Write did not return after its timeout")
+	}
+	if b, err := rb.ReadByte(); b != 'a' || err != nil {
+		t.Fatalf("buffer unusable after timeout: got %q, %v", b, err)
+	}
+}
+
 func TestRingBuffer_Write(t *testing.T) {
 	rb := New(64)
 
