@@ -384,6 +384,9 @@ func (r *RingBuffer) ReadByte() (b byte, err error) {
 	}
 
 	r.isFull = false
+	if r.block {
+		r.readCond.Broadcast()
+	}
 	return b, r.readErr(true)
 }
 
