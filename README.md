@@ -4,7 +4,9 @@
 
 A circular buffer (ring buffer) in Go, implemented io.ReaderWriter interface
 
-[![wikipedia](Circular_Buffer_Animation.gif)](https://github.com/smallnest/ringbuffer)
+![Ring buffer animation](Circular_Buffer_Animation.gif)
+
+Animation by [MuhannadAjjan](https://commons.wikimedia.org/wiki/File:Circular_Buffer_Animation.gif), licensed [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
 
 # Usage
 
