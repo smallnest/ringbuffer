@@ -429,6 +429,12 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 		}
 		err = r.setErr(err, true)
 		if r.block && (err == ErrIsFull || err == ErrTooMuchDataToWrite) {
+			if r.overwrite {
+				// The rest overwrites what was just written, no need to wait for a reader.
+				p = p[n:]
+				err = nil
+				continue
+			}
 			// Record the generation before waiting. If Reset() increments the generation,
 			// we will detect it after waking up and continue waiting.
 			myGen := r.generation

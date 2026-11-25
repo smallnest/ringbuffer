@@ -2318,3 +2318,44 @@ func TestRingBuffer_OverwriteMode_WriteLargerThanCapacity(t *testing.T) {
 		})
 	}
 }
+
+func TestRingBuffer_OverwriteMode_BlockingWriteLargerThanCapacity(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		prefill string
+		write   string
+		want    string
+	}{
+		{"empty", "", "abcdef", "cdef"},
+		{"empty_odd", "", "abcde", "bcde"},
+		{"partial", "ab", "cdefgh", "efgh"},
+		{"full", "abcd", "efghij", "ghij"},
+		{"several_times", "ab", "abcdefghijklmnopq", "nopq"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rb := New(4).SetOverwrite(true).SetBlocking(true)
+			if tt.prefill != "" {
+				if _, err := rb.Write([]byte(tt.prefill)); err != nil {
+					t.Fatalf("prefill: %v", err)
+				}
+			}
+			// There is no reader, so the write must not wait for one.
+			done := make(chan result, 1)
+			go func() {
+				n, err := rb.Write([]byte(tt.write))
+				done <- result{n: n, err: err}
+			}()
+			select {
+			case res := <-done:
+				if res.n != len(tt.write) || res.err != nil {
+					t.Errorf("Write = %d, %v, want %d, nil", res.n, res.err, len(tt.write))
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("Write blocked")
+			}
+			if got := string(rb.Bytes(nil)); got != tt.want {
+				t.Errorf("Bytes = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
