@@ -14,7 +14,9 @@ import (
 )
 
 var (
-	// ErrTooMuchDataToWrite is returned when the data to write is more than the buffer size.
+	// ErrTooMuchDataToWrite is returned by a non-blocking Write when the data to write
+	// is more than the buffer's free space. It is never returned in overwrite mode,
+	// where the oldest data is discarded to make room instead.
 	ErrTooMuchDataToWrite = errors.New("too much data to write")
 
 	// ErrIsFull is returned when the buffer is full and not blocking.
@@ -86,6 +88,8 @@ func NewBuffer(b []byte) *RingBuffer {
 // If block is true, Read and Write will block when there is no data to read or no space to write.
 // If block is false, Read and Write will return ErrIsEmpty or ErrIsFull immediately.
 // By default, the ring buffer is not blocking.
+// In overwrite mode there is always space, since the oldest data can be discarded
+// (see SetOverwrite). Write therefore never blocks in that mode.
 // This setting should be called before any Read or Write operation or after a Reset.
 func (r *RingBuffer) SetBlocking(block bool) *RingBuffer {
 	r.block = block
@@ -99,6 +103,11 @@ func (r *RingBuffer) SetBlocking(block bool) *RingBuffer {
 // SetOverwrite sets the overwrite mode of the ring buffer.
 // If overwrite is true, Write operations will overwrite the oldest data when the buffer is full,
 // similar to a traditional circular buffer. The read pointer will advance to skip overwritten data.
+// Because room is always made by discarding the oldest data, a blocking Write never waits for a
+// reader in this mode.
+// A write that does not fit keeps the last size bytes of the data: the bytes before them are
+// overwritten by the bytes that follow, so the write is reported as fully accepted
+// (n == len(p), err == nil) even though those leading bytes were never copied.
 // If overwrite is false (default), Write will return ErrIsFull or block (if blocking mode is enabled).
 func (r *RingBuffer) SetOverwrite(overwrite bool) *RingBuffer {
 	r.overwrite = overwrite
@@ -409,6 +418,8 @@ func (r *RingBuffer) checkWriteErr() error {
 // If blocking n < len(p) will be returned only if an error occurred.
 // Write returns a non-nil error if it returns n < len(p).
 // Write will not modify the slice data, even temporarily.
+// In overwrite mode Write never blocks and never fails; see SetOverwrite for
+// which bytes of an oversized write survive.
 func (r *RingBuffer) Write(p []byte) (n int, err error) {
 	if len(p) == 0 {
 		return 0, r.setErr(nil, false)
@@ -420,7 +431,9 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 	if err := r.checkWriteErr(); err != nil {
 		return 0, err
 	}
-	wrote := 0
+	// Count the dropped bytes as written: they are accepted, then overwritten by
+	// the bytes that follow them.
+	p, wrote := r.fitOverwrite(p)
 	for len(p) > 0 {
 		n, err = r.write(p)
 		wrote += n
@@ -428,13 +441,8 @@ func (r *RingBuffer) Write(p []byte) (n int, err error) {
 			break
 		}
 		err = r.setErr(err, true)
-		if r.block && (err == ErrIsFull || err == ErrTooMuchDataToWrite) {
-			if r.overwrite {
-				// The rest overwrites what was just written, no need to wait for a reader.
-				p = p[n:]
-				err = nil
-				continue
-			}
+		// r.block is true here: the check above breaks out otherwise.
+		if err == ErrIsFull || err == ErrTooMuchDataToWrite {
 			// Record the generation before waiting. If Reset() increments the generation,
 			// we will detect it after waking up and continue waiting.
 			myGen := r.generation
@@ -708,11 +716,27 @@ func (r *RingBuffer) TryWrite(p []byte) (n int, err error) {
 		return 0, err
 	}
 
-	n, err = r.write(p)
-	if r.block && n > 0 {
+	p, dropped := r.fitOverwrite(p)
+	written, err := r.write(p)
+	if r.block && written > 0 {
 		r.writeCond.Broadcast()
 	}
-	return n, r.setErr(err, true)
+	return dropped + written, r.setErr(err, true)
+}
+
+// fitOverwrite trims p for a write in overwrite mode. The buffer keeps only the
+// last size bytes of a write that does not fit: the bytes before them are
+// overwritten by the bytes that follow them, so copying them would be wasted
+// work. The dropped bytes are still part of what the caller wrote, hence the
+// returned count.
+// A zero-sized buffer is left alone, since it cannot keep anything anyway.
+// Must be called with the mutex held.
+func (r *RingBuffer) fitOverwrite(p []byte) ([]byte, int) {
+	if !r.overwrite || r.size == 0 || len(p) <= r.size {
+		return p, 0
+	}
+	dropped := len(p) - r.size
+	return p[dropped:], dropped
 }
 
 func (r *RingBuffer) write(p []byte) (n int, err error) {
