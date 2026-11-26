@@ -2028,13 +2028,14 @@ func TestRingBuffer_OverwriteMode_TwiceFull(t *testing.T) {
 	// Fill buffer
 	_, _ = rb.Write([]byte("abcd"))
 
-	// Write 8 bytes - should replace all with first 4 bytes of new data
+	// Write 8 bytes - the buffer keeps the last 4 bytes of the new data, the
+	// first 4 are overwritten by the ones that follow them
 	_, _ = rb.Write([]byte("efghijkl"))
 
 	buf := make([]byte, 4)
 	_, _ = rb.Read(buf)
-	if string(buf) != "efgh" {
-		t.Fatalf("Expected 'efgh', got '%s'", string(buf))
+	if string(buf) != "ijkl" {
+		t.Fatalf("Expected 'ijkl', got '%s'", string(buf))
 	}
 }
 
@@ -2289,18 +2290,65 @@ type result struct {
 	err  error
 }
 
+// overwriteOversizeCases exercises writes that do not fit in a New(4) buffer
+// with overwrite mode enabled. Whatever the mode, the buffer ends up holding
+// the last 4 bytes of prefill+write, and the write counts as fully accepted.
+var overwriteOversizeCases = []struct {
+	name    string
+	prefill string
+	write   string
+	want    string
+}{
+	{"empty", "", "abcdef", "cdef"},
+	{"empty_odd", "", "abcde", "bcde"},
+	{"partial", "ab", "cdefgh", "efgh"},
+	{"full", "abcd", "efghij", "ghij"},
+	{"exact", "abcd", "efgh", "efgh"},
+	{"several_times", "ab", "abcdefghijklmnopq", "nopq"},
+	{"much_larger", "", "0123456789abcdefghijklmnopqrstuvwxyz", "wxyz"},
+}
+
 func TestRingBuffer_OverwriteMode_WriteLargerThanCapacity(t *testing.T) {
-	for _, tt := range []struct {
-		name    string
-		prefill string
-		write   string
-		want    string
-	}{
-		{"empty", "", "abcdef", "abcd"},
-		{"empty_odd", "", "abcde", "abcd"},
-		{"partial", "ab", "cdefgh", "cdef"},
-		{"full", "abcd", "efghij", "efgh"},
-	} {
+	for _, tt := range overwriteOversizeCases {
+		for _, blocking := range []bool{false, true} {
+			name := "non-blocking"
+			if blocking {
+				name = "blocking"
+			}
+			t.Run(tt.name+"/"+name, func(t *testing.T) {
+				rb := New(4).SetOverwrite(true).SetBlocking(blocking)
+				if tt.prefill != "" {
+					if _, err := rb.Write([]byte(tt.prefill)); err != nil {
+						t.Fatalf("prefill: %v", err)
+					}
+				}
+				// There is no reader, so neither mode may wait for one.
+				done := make(chan result, 1)
+				go func() {
+					n, err := rb.Write([]byte(tt.write))
+					done <- result{n: n, err: err}
+				}()
+				select {
+				case res := <-done:
+					if res.n != len(tt.write) || res.err != nil {
+						t.Errorf("Write = %d, %v, want %d, nil", res.n, res.err, len(tt.write))
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("Write blocked")
+				}
+				if got := string(rb.Bytes(nil)); got != tt.want {
+					t.Errorf("Bytes = %q, want %q", got, tt.want)
+				}
+				if got := rb.Length(); got != 4 {
+					t.Errorf("Length = %d, want 4", got)
+				}
+			})
+		}
+	}
+}
+
+func TestRingBuffer_OverwriteMode_TryWriteLargerThanCapacity(t *testing.T) {
+	for _, tt := range overwriteOversizeCases {
 		t.Run(tt.name, func(t *testing.T) {
 			rb := New(4).SetOverwrite(true)
 			if tt.prefill != "" {
@@ -2308,50 +2356,9 @@ func TestRingBuffer_OverwriteMode_WriteLargerThanCapacity(t *testing.T) {
 					t.Fatalf("prefill: %v", err)
 				}
 			}
-			n, err := rb.Write([]byte(tt.write))
-			if got := string(rb.Bytes(nil)); got != tt.want {
-				t.Errorf("Bytes = %q, want %q (n=%d err=%v)", got, tt.want, n, err)
-			}
-			if rb.Length() != 4 {
-				t.Errorf("Length = %d, want 4", rb.Length())
-			}
-		})
-	}
-}
-
-func TestRingBuffer_OverwriteMode_BlockingWriteLargerThanCapacity(t *testing.T) {
-	for _, tt := range []struct {
-		name    string
-		prefill string
-		write   string
-		want    string
-	}{
-		{"empty", "", "abcdef", "cdef"},
-		{"empty_odd", "", "abcde", "bcde"},
-		{"partial", "ab", "cdefgh", "efgh"},
-		{"full", "abcd", "efghij", "ghij"},
-		{"several_times", "ab", "abcdefghijklmnopq", "nopq"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			rb := New(4).SetOverwrite(true).SetBlocking(true)
-			if tt.prefill != "" {
-				if _, err := rb.Write([]byte(tt.prefill)); err != nil {
-					t.Fatalf("prefill: %v", err)
-				}
-			}
-			// There is no reader, so the write must not wait for one.
-			done := make(chan result, 1)
-			go func() {
-				n, err := rb.Write([]byte(tt.write))
-				done <- result{n: n, err: err}
-			}()
-			select {
-			case res := <-done:
-				if res.n != len(tt.write) || res.err != nil {
-					t.Errorf("Write = %d, %v, want %d, nil", res.n, res.err, len(tt.write))
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("Write blocked")
+			n, err := rb.TryWrite([]byte(tt.write))
+			if n != len(tt.write) || err != nil {
+				t.Errorf("TryWrite = %d, %v, want %d, nil", n, err, len(tt.write))
 			}
 			if got := string(rb.Bytes(nil)); got != tt.want {
 				t.Errorf("Bytes = %q, want %q", got, tt.want)

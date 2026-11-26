@@ -51,6 +51,7 @@ Enabling blocking will cause the ring buffer to behave like a buffered [io.Pipe]
 
 Regular Reads will block until data is available, but not wait for a full buffer. 
 Writes will block until there is space available and writes bigger than the buffer will wait for reads to make space.
+(Not in overwrite mode, where writes never wait — see below.)
 
 `TryRead` and `TryWrite` are still available for non-blocking reads and writes.
 
@@ -62,6 +63,22 @@ Any reads or writes will return the error on next call.
 In blocking mode errors are stateful and the same error will be returned until `rb.Reset()` is called.
 
 It is possible to set a deadline for blocking Read/Write operations using `rb.WithDeadline(time.Duration)`.
+
+# Overwrite mode
+
+By default a full buffer makes writes fail or block. With overwrite mode enabled the buffer behaves
+like a traditional circular buffer: the oldest data is discarded to make room for the new data, and
+the read pointer advances past it.
+
+```go
+	rb := ringbuffer.New(1024).SetOverwrite(true)
+```
+
+In overwrite mode `Write` never blocks and never fails, even when blocking mode is enabled — there is
+always room to make by discarding the oldest data. A write larger than the buffer keeps its last
+`rb.Capacity()` bytes: the bytes before them are overwritten by the bytes that follow, so the write is
+reported as fully accepted (`n == len(p)`, `err == nil`) and `n` cannot be used to detect the loss.
+`TryWrite` behaves the same way; `WriteByte` drops the oldest byte when the buffer is full.
 
 # Waiting without blocking: Notify
 
